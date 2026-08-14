@@ -1,0 +1,58 @@
+{
+  "name": "dsh-plugin-notify",
+  "version": "1.0.0",
+  "description": "Message reminders for the DeepSeek Harness web GUI: browser, system, webhook (Feishu/DingTalk/WeCom/generic JSON) and sound notifications when a task turn finishes or execution waits for user confirmation, plus a settings section to manage channels.",
+  "type": "module",
+  "main": "lib/index.js",
+  "exports": {
+    ".": {
+      "default": "./lib/index.js"
+    },
+    "./client": {
+      "default": "./lib/client.js"
+    },
+    "./package.json": "./package.json"
+  },
+  "files": [
+    "lib/index.js",
+    "lib/client.js"
+  ],
+  "dsh": {
+    "client": {
+      "platform": "web",
+      "inject": [],
+      "immediately": true
+    }
+  },
+  "license": "MIT",
+  "keywords": [
+    "deepseek-harness",
+    "dsh",
+    "dsh-plugin",
+    "deepseek",
+    "deepseek-ai",
+    "cordis",
+    "plugin",
+    "notify",
+    "notification",
+    "notifications",
+    "webhook",
+    "feishu",
+    "dingtalk",
+    "wecom",
+    "sidebar",
+    "web-ui",
+    "badge"
+  ],
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/c-ling/dsh-plugin-notify.git"
+  },
+  "bugs": {
+    "url": "https://github.com/c-ling/dsh-plugin-notify/issues"
+  },
+  "homepage": "https://github.com/c-ling/dsh-plugin-notify#readme",
+  "scripts": {
+    "test": "node --test"
+  }
+}
