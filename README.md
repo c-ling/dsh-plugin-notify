@@ -9,8 +9,8 @@ DeepSeek Harness Web GUI 的消息提醒插件：任务回合执行结束、或�
 
 | 渠道 | 位置 | 说明 |
 | --- | --- | --- |
-| 浏览器通知（页面内横幅） | 客户端 | 页面可见时在右上角弹出文字横幅，不依赖系统通知权限；离开页面时请配合系统通知使用 |
-| 系统通知 | 宿主机 | macOS `osascript` / Linux `notify-send`，浏览器关闭也能收到；可选 macOS 系统提示音（`afplay`） |
+| 浏览器通知（页面内横幅）＋ 系统原生通知（可选） | 客户端 | 两个独立设置项：「浏览器通知」在页面可见时于右上角弹出文字横幅；「系统原生通知」通过浏览器 Notification API 弹出操作系统通知，标签页在后台/最小化时也能收到（需浏览器通知权限）；完全离开页面时请配合系统通知使用 |
+| 系统通知 | 宿主机 | macOS `osascript` / Linux `notify-send` / Windows PowerShell 原生 toast（Windows 10/11 操作中心），浏览器关闭也能收到；可选系统提示音（macOS `afplay` / Windows 系统内置提示音） |
 | 飞书群机器人 | 宿主机 | 文本消息，可选签名密钥（timestamp + HMAC-SHA256），可选自定义消息模板 |
 | 钉钉群机器人 | 宿主机 | 文本消息，可选加签（timestamp + sign），可选自定义消息模板 |
 | 企业微信群机器人 | 宿主机 | 文本消息，可选自定义消息模板 |
@@ -36,14 +36,14 @@ DeepSeek Harness Web GUI 的消息提醒插件：任务回合执行结束、或�
 从 GitHub 安装到 web profile（需要 `pnpm` 在 `PATH` 上；没有则用下面的 corepack 方式）：
 
 ```sh
-dsh plugin --profile web add "github:c-ling/dsh-plugin-notify#v1.0.0"
+dsh plugin --profile web add "github:c-ling/dsh-plugin-notify#v1.1.0"
 ```
 
 pnpm 不在 `PATH` 上时：
 
 ```sh
 cd ~/.dsh/profiles/web
-corepack pnpm add "github:c-ling/dsh-plugin-notify#v1.0.0"
+corepack pnpm add "github:c-ling/dsh-plugin-notify#v1.1.0"
 ```
 
 > `dsh plugin` 把参数原样转发给 pnpm，直接从本仓库拉取包（pnpm 9+，本机需装有 `git`）。
@@ -100,7 +100,7 @@ node --test
 
 ## 已知限制
 
-- 浏览器渠道是页面内文字横幅（不调用浏览器 Notification API），页面不可见时不会送达，需配合系统通知渠道使用。
+- 浏览器渠道默认是页面内文字横幅；开启「系统原生通知」后，标签页在后台或窗口最小化时也会通过浏览器 Notification API 弹出系统通知（需要浏览器通知权限，且浏览器必须保持运行）。浏览器完全关闭时请使用宿主机系统通知渠道。
 - 飞书/钉钉签名密钥仅做「只写 + 读回脱敏」，保存在本地 `config.json` 中但未加密；请勿在通用 Webhook 的地址或请求头中放置其他敏感凭据。
 
 ## License

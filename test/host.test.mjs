@@ -25,8 +25,45 @@ import {
   sendGeneric,
   planJobs,
   handleSessionEvent,
+  systemNotify,
+  playSystemSound,
   apply,
 } from "../lib/index.js";
+
+// ── system channel ─────────────────────────────────────────────────────────
+
+test("systemNotify uses osascript on darwin and rejects on unknown platforms", async () => {
+  const calls = [];
+  await systemNotify("标题", "正文", async (file, args) => { calls.push({ file, args }); }, () => "darwin");
+  assert.equal(calls[0].file, "osascript");
+  assert.match(calls[0].args.join(" "), /display notification/);
+  await assert.rejects(() => systemNotify("t", "b", async () => {}, () => "freebsd"), /不支持系统通知/);
+});
+
+test("systemNotify builds a PowerShell WinRT toast on win32 with escaped text", async () => {
+  const calls = [];
+  await systemNotify('任务 "完成" $now', "正文 `x 与 $5", async (file, args) => { calls.push({ file, args }); }, () => "win32");
+  assert.equal(calls[0].file, "powershell.exe");
+  const script = calls[0].args.join(" ");
+  assert.match(script, /ToastNotificationManager/);
+  assert.match(script, /CreateToastNotifier/);
+  assert.match(script, /WindowsPowerShell\\v1\.0\\powershell\.exe/);
+  assert.ok(script.includes('`"完成`"'), "double quotes backtick-escaped");
+  assert.ok(script.includes("`$now"), "dollar sign backtick-escaped");
+  assert.ok(script.includes("``x"), "backtick doubled");
+  assert.ok(script.includes("`$5"));
+});
+
+test("playSystemSound plays afplay on darwin and a wav via SoundPlayer on win32", async () => {
+  const darwinCalls = [];
+  await playSystemSound(async (file, args) => { darwinCalls.push({ file, args }); }, () => "darwin");
+  assert.equal(darwinCalls[0].file, "afplay");
+  const winCalls = [];
+  await playSystemSound(async (file, args) => { winCalls.push({ file, args }); }, () => "win32");
+  assert.equal(winCalls[0].file, "powershell.exe");
+  assert.match(winCalls[0].args.join(" "), /SoundPlayer/);
+  await assert.rejects(() => playSystemSound(async () => {}, () => "linux"), /仅 macOS \/ Windows/);
+});
 
 // ── signatures ─────────────────────────────────────────────────────────────
 
@@ -81,9 +118,16 @@ test("normalizeConfig merges defaults for empty input", () => {
   assert.deepEqual(cfg.triggers.turnEndKinds, ["completed", "blocked", "aborted"]);
   assert.equal(cfg.triggers.turnEnd, true);
   assert.equal(cfg.browser.toast, true);
+  assert.equal(cfg.browser.native, false);
   assert.equal("sound" in cfg.browser, false);
   assert.equal("onlyWhenHidden" in cfg.browser, false);
   assert.deepEqual(cfg.webhooks.generic, []);
+});
+
+test("normalizeConfig keeps the browser.native flag and rejects non-booleans", () => {
+  assert.equal(normalizeConfig({ browser: { native: true } }).browser.native, true);
+  assert.equal(normalizeConfig({ browser: { native: "yes" } }).browser.native, false);
+  assert.equal(normalizeConfig({ browser: { native: false } }).browser.native, false);
 });
 
 test("normalizeConfig sanitizes bad values and dedupes kinds", () => {
