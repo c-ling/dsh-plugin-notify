@@ -42,7 +42,9 @@
     "wecom",
     "sidebar",
     "web-ui",
-    "badge"
+    "badge",
+    "open-source",
+    "javascript"
   ],
   "repository": {
     "type": "git",
