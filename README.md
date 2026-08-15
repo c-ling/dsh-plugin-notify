@@ -36,14 +36,14 @@ DeepSeek Harness Web GUI 的消息提醒插件：任务回合执行结束、或�
 从 GitHub 安装到 web profile（需要 `pnpm` 在 `PATH` 上；没有则用下面的 corepack 方式）：
 
 ```sh
-dsh plugin --profile web add "github:c-ling/dsh-plugin-notify#v1.1.0"
+dsh plugin --profile web add "github:c-ling/dsh-plugin-notify#v1.1.1"
 ```
 
 pnpm 不在 `PATH` 上时：
 
 ```sh
 cd ~/.dsh/profiles/web
-corepack pnpm add "github:c-ling/dsh-plugin-notify#v1.1.0"
+corepack pnpm add "github:c-ling/dsh-plugin-notify#v1.1.1"
 ```
 
 > `dsh plugin` 把参数原样转发给 pnpm，直接从本仓库拉取包（pnpm 9+，本机需装有 `git`）。
@@ -97,6 +97,12 @@ node --test
 - `GET  /dsh-plugin-notify/config` — 脱敏后的当前配置 + secretSet
 - `POST /dsh-plugin-notify/config` — `{ config, clearSecrets? }` 整体替换用户可编辑配置
 - `POST /dsh-plugin-notify/test` — `{ channel: "system" | "feishu" | "dingtalk" | "wecom" | "generic", genericId? }` 发送测试消息
+
+## 更新日志
+
+- **v1.1.1** — 修复「设置 → 消息提醒」页在黑夜模式下的样式：保存按钮、开关、卡片/输入框边框、状态文字等统一改用 `--dsw-alias-*` 设计变量，跟随明暗主题。
+- **v1.1.0** — 新增浏览器系统原生通知、Windows 系统通知与提示音，浏览器与原生通知拆分为独立设置项。
+- **v1.0.0** — 首个 GitHub 版本：浏览器横幅、系统通知、飞书/钉钉/企业微信/通用 Webhook 渠道与设置页。
 
 ## 已知限制
 
