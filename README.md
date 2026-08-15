@@ -1,56 +1,74 @@
 # dsh-plugin-notify
 
-DeepSeek Harness Web GUI 的消息提醒插件：任务回合执行结束、或执行到需要用户确认时，按配置向所选渠道发送提醒，并在设置面板提供「消息提醒」菜单页。
+Message reminders for the DeepSeek Harness web GUI: browser, system, webhook
+(Feishu/DingTalk/WeCom/generic JSON) and sound notifications when a task turn finishes or
+execution waits for user confirmation, plus a settings section to manage channels.
+
+[中文](README-ZH.md)
 
 [![dsh-plugin topic](https://img.shields.io/badge/topic-dsh--plugin-blue)](https://github.com/topics/dsh-plugin)
 [![license](https://img.shields.io/badge/license-MIT-green)](LICENSE)
 
-## 渠道
+## Channels
 
-| 渠道 | 位置 | 说明 |
+| Channel | Location | Notes |
 | --- | --- | --- |
-| 浏览器通知（页面内横幅）＋ 系统原生通知（可选） | 客户端 | 两个独立设置项：「浏览器通知」在页面可见时于右上角弹出文字横幅；「系统原生通知」通过浏览器 Notification API 弹出操作系统通知，标签页在后台/最小化时也能收到（需浏览器通知权限）；完全离开页面时请配合系统通知使用 |
-| 系统通知 | 宿主机 | macOS `osascript` / Linux `notify-send` / Windows PowerShell 原生 toast（Windows 10/11 操作中心），浏览器关闭也能收到；可选系统提示音（macOS `afplay` / Windows 系统内置提示音） |
-| 飞书群机器人 | 宿主机 | 文本消息，可选签名密钥（timestamp + HMAC-SHA256），可选自定义消息模板 |
-| 钉钉群机器人 | 宿主机 | 文本消息，可选加签（timestamp + sign），可选自定义消息模板 |
-| 企业微信群机器人 | 宿主机 | 文本消息，可选自定义消息模板 |
-| 通用 Webhook | 宿主机 | 自定义 URL + headers + JSON/文本模板，占位符 `{{title}} {{body}} {{kind}} {{sessionId}} {{turn}} {{toolName}} {{reason}} {{time}}`，可对接 Slack / Discord / ntfy / Bark / Server酱 / PushPlus 等 |
+| Browser notification (in-page banner) + optional OS notification | Client | Two independent settings. **Browser notification** shows a text banner in the top-right while the page is visible. **OS notification** uses the browser Notification API, so it also fires when the tab is in the background or the window is minimized (browser notification permission required). Keep the browser running and use the host system channel if you leave the page entirely. |
+| System notification | Host | macOS `osascript` / Linux `notify-send` / Windows PowerShell native toast (Windows 10/11 action center); works even when the browser is closed. Optional system sound (macOS `afplay` / Windows built-in alert sound). |
+| Feishu group bot | Host | Text message, optional signed secret (timestamp + HMAC-SHA256), optional custom message template. |
+| DingTalk group bot | Host | Text message, optional signed secret (timestamp + sign), optional custom message template. |
+| WeCom group bot | Host | Text message, optional custom message template. |
+| Generic webhook | Host | Custom URL + headers + JSON/text template. Placeholders: `{{title}} {{body}} {{kind}} {{sessionId}} {{turn}} {{toolName}} {{reason}} {{time}}`. Works with Slack / Discord / ntfy / Bark / ServerChan / PushPlus, etc. |
 
-## 消息格式
+## Message format
 
-所有 Webhook 渠道共用同一套占位符：`{{title}} {{body}} {{kind}} {{sessionId}} {{turn}} {{toolName}} {{reason}} {{time}}`。
+All webhook channels share the same placeholders:
+`{{title}} {{body}} {{kind}} {{sessionId}} {{turn}} {{toolName}} {{reason}} {{time}}`.
 
-- 飞书/钉钉/企业微信默认使用统一格式（标题 + 详情 + 会话 + 本地时间），在设置页的「消息模板」留空即用默认；填写后按你的模板渲染。
-- 通用 Webhook 的模板留空时发送纯文本消息正文。
+- Feishu/DingTalk/WeCom use a unified default format (title + details + session + local time).
+  Leave the **Message template** field empty in settings to use the default; fill it to render
+  with your own template.
+- The generic webhook sends the plain-text message body when its template is empty.
 
-## 触发
+## Triggers
 
-- `turn/end`：回合结束，按 `triggers.turnEndKinds` 过滤（completed/blocked/aborted/error，默认 completed+blocked）。
-- `approval/asked`：工具调用等待用户审批（宿主机渠道）。
-- 浏览器渠道额外覆盖等待用户确认的交互（审批/提问，来自会话快照的 pending 列表）。
+- `turn/end`: fired when a turn ends, filtered by `triggers.turnEndKinds`
+  (completed/blocked/aborted/error; default completed+blocked).
+- `approval/asked`: fired when a tool call waits for user approval (host channels).
+- The browser channel additionally covers interactions waiting for user confirmation
+  (approval / question, from the pending list in the session snapshot).
 
-宿主机的系统/Webhook 渠道覆盖所有会话；浏览器渠道跟随当前打开的会话。
+Host system/webhook channels cover all sessions; the browser channel follows the currently
+open session.
 
-## 安装
+## Install
 
-从 GitHub 安装到 web profile（需要 `pnpm` 在 `PATH` 上；没有则用下面的 corepack 方式）：
+Install into the web profile from GitHub (requires `pnpm` on `PATH`; otherwise use the
+corepack fallback below):
 
 ```sh
-dsh plugin --profile web add "github:c-ling/dsh-plugin-notify#v1.1.1"
+npx @deepseek-ai/dsh plugin --profile web add "github:c-ling/dsh-plugin-notify#v1.1.2"
 ```
 
-pnpm 不在 `PATH` 上时：
+Or with an existing `dsh` binary:
+
+```sh
+dsh plugin --profile web add "github:c-ling/dsh-plugin-notify#v1.1.2"
+```
+
+When `pnpm` is not on `PATH`:
 
 ```sh
 cd ~/.dsh/profiles/web
-corepack pnpm add "github:c-ling/dsh-plugin-notify#v1.1.1"
+corepack pnpm add "github:c-ling/dsh-plugin-notify#v1.1.2"
 ```
 
-> `dsh plugin` 把参数原样转发给 pnpm，直接从本仓库拉取包（pnpm 9+，本机需装有 `git`）。
-> 安装时若看到 `declares no dsh.bundle — installed as a plain dependency` 的提示属正常现象：
-> 本插件不是 profile bundle 层，而是通过下面的 loader 行激活。
+> `dsh plugin` forwards its arguments to pnpm and fetches the package from this repo
+> (pnpm 9+, `git` required). The warning
+> `declares no dsh.bundle — installed as a plain dependency` is expected: this plugin is
+> not a profile bundle layer; it is activated by the loader row below.
 
-然后在 `~/.dsh/profiles/web/cordis.patch.yml` 增加一行插入：
+Then add a loader row to `~/.dsh/profiles/web/cordis.patch.yml`:
 
 ```yaml
 - insert:
@@ -58,56 +76,91 @@ corepack pnpm add "github:c-ling/dsh-plugin-notify#v1.1.1"
       name: 'dsh-plugin-notify'
 ```
 
-重启 `dsh web`（client-modules 按进程缓存包裁决，新包必须重启宿主），然后硬刷新页面。
-设置页位于「设置 → 消息提醒」。
+Restart `dsh web` (client-modules caches package verdicts per process; new packages require a
+host restart), then hard-refresh the page. The settings page appears under
+**Settings → Message reminders**.
 
-## 验证
+## Verify
 
 ```sh
 curl -s http://127.0.0.1:3080/plugins/dsh-plugin-notify/client.js | head -c 60
 ```
 
-应输出 `window.__ModuleLoader__.load({` 开头的 factory bundle；设置页「设置 → 消息提醒」可配置并逐渠道发送测试消息。
+It should print a factory bundle starting with `window.__ModuleLoader__.load({`; in
+**Settings → Message reminders** you can configure each channel and send a test message.
 
-## 卸载
+## Update
+
+```sh
+dsh plugin --profile web add "github:c-ling/dsh-plugin-notify#v1.1.2"
+# or: npx @deepseek-ai/dsh plugin --profile web add "github:c-ling/dsh-plugin-notify#v1.1.2"
+# or: cd ~/.dsh/profiles/web && corepack pnpm add "github:c-ling/dsh-plugin-notify#v1.1.2"
+```
+
+Re-running the install command with the new `#v1.1.2` pin upgrades the dependency;
+the loader row in `cordis.patch.yml` stays unchanged. Restart `dsh web`, then hard-refresh.
+
+## Uninstall
 
 ```sh
 cd ~/.dsh/profiles/web
-corepack pnpm remove dsh-plugin-notify   # 或 dsh plugin --profile web remove dsh-plugin-notify
+corepack pnpm remove dsh-plugin-notify   # or: dsh plugin --profile web remove dsh-plugin-notify
 ```
 
-同时删除 `cordis.patch.yml` 中对应的 insert 行，然后重启 `dsh web`。
-配置数据保留在 `$DSH_HOME/storages/dsh-plugin-notify/config.json`，删除该目录即可彻底清除。
+Also remove the matching `insert` row from `cordis.patch.yml`, then restart `dsh web`.
+Configuration data remains under `$DSH_HOME/storages/dsh-plugin-notify/config.json`; delete
+that directory to remove it completely.
 
-## 配置存储
+## Config storage
 
-配置保存在 `$DSH_HOME/storages/dsh-plugin-notify/config.json`（可通过插件行的 `config.directory` 覆盖）。Webhook 签名密钥为只写字段：接口读回空串并用 `secretSet` 标记是否已配置，写入时空串表示保持不变，`clearSecrets` 列出要清除的路径。Webhook 地址与通用请求头以明文保存，请勿在其中放置敏感凭据（除飞书/钉钉签名密钥外）。
+Configuration is stored in `$DSH_HOME/storages/dsh-plugin-notify/config.json` (overridable
+via `config.directory` in the plugin loader row). Webhook signature secrets are write-only:
+the API reads them back as empty strings and marks configured ones with `secretSet`. An empty
+string on write means “keep unchanged”; `clearSecrets` lists paths to clear. Webhook URLs and
+generic request headers are stored in plain text, so do not put sensitive credentials there
+(other than the Feishu/DingTalk signature secrets).
 
-## 开发
+## Development
 
 ```sh
 node --check lib/index.js lib/client.js
 node --test
 ```
 
-客户端为手写 factory-CJS bundle（`window.__ModuleLoader__.load({ id: "dsh-plugin-notify", factory })`），无构建步骤；UI 通过 `settings.section` 与 `shell.overlay` 插槽注册。宿主端为纯 Node 内置模块实现（无 `@deepseek-ai/*` 依赖），通过 `webServer` 服务注册三条路由并订阅 `session/event` 事件流。
+The client is a hand-written factory-CJS bundle
+(`window.__ModuleLoader__.load({ id: "dsh-plugin-notify", factory })`) with no build step;
+its UI is registered through the `settings.section` and `shell.overlay` slots. The host half
+uses only Node built-in modules (no `@deepseek-ai/*` dependencies), registers three routes on
+the `webServer` service, and subscribes to the `session/event` stream.
 
-接口：
+Endpoints:
 
-- `GET  /dsh-plugin-notify/config` — 脱敏后的当前配置 + secretSet
-- `POST /dsh-plugin-notify/config` — `{ config, clearSecrets? }` 整体替换用户可编辑配置
-- `POST /dsh-plugin-notify/test` — `{ channel: "system" | "feishu" | "dingtalk" | "wecom" | "generic", genericId? }` 发送测试消息
+- `GET  /dsh-plugin-notify/config` — sanitized current config + `secretSet`
+- `POST /dsh-plugin-notify/config` — `{ config, clearSecrets? }` replaces the user-editable config
+- `POST /dsh-plugin-notify/test` — `{ channel: "system" | "feishu" | "dingtalk" | "wecom" | "generic", genericId? }` sends a test message
 
-## 更新日志
+## Changelog
 
-- **v1.1.1** — 修复「设置 → 消息提醒」页在黑夜模式下的样式：保存按钮、开关、卡片/输入框边框、状态文字等统一改用 `--dsw-alias-*` 设计变量，跟随明暗主题。
-- **v1.1.0** — 新增浏览器系统原生通知、Windows 系统通知与提示音，浏览器与原生通知拆分为独立设置项。
-- **v1.0.0** — 首个 GitHub 版本：浏览器横幅、系统通知、飞书/钉钉/企业微信/通用 Webhook 渠道与设置页。
+- **v1.1.2** — Split the README into default English `README.md` + Chinese `README-ZH.md`
+  (reciprocal language links at the top), add the `npx @deepseek-ai/dsh plugin ...` install
+  path and an Update section, and pin every install command to `#v1.1.2`.
+- **v1.1.1** — Fix dark-mode styling for the **Settings → Message reminders** page: save
+  button, switches, card/input borders and status colors now use `--dsw-alias-*` design
+  tokens and follow the light/dark theme.
+- **v1.1.0** — Add browser OS notifications, Windows system notifications and alert sounds;
+  browser and OS notifications are now independent settings.
+- **v1.0.0** — First GitHub release: browser banner, system notification,
+  Feishu/DingTalk/WeCom/generic webhook channels, and the settings page.
 
-## 已知限制
+## Known limitations
 
-- 浏览器渠道默认是页面内文字横幅；开启「系统原生通知」后，标签页在后台或窗口最小化时也会通过浏览器 Notification API 弹出系统通知（需要浏览器通知权限，且浏览器必须保持运行）。浏览器完全关闭时请使用宿主机系统通知渠道。
-- 飞书/钉钉签名密钥仅做「只写 + 读回脱敏」，保存在本地 `config.json` 中但未加密；请勿在通用 Webhook 的地址或请求头中放置其他敏感凭据。
+- The browser channel is an in-page text banner by default. When **OS notification** is
+  enabled, the browser Notification API can notify while the tab is in the background or the
+  window is minimized (permission required, and the browser must stay running). Use the host
+  system notification channel when the browser is fully closed.
+- Feishu/DingTalk signature secrets are write-only + read-sanitized and stored unencrypted in
+  the local `config.json`; do not put other sensitive credentials in generic-webhook URLs or
+  request headers.
 
 ## License
 
