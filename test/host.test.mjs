@@ -19,6 +19,8 @@ import {
   DEFAULT_MESSAGE_TEMPLATE,
   buildTurnEndMessage,
   buildApprovalMessage,
+  buildQuestionMessage,
+  ASK_USER_QUESTION_TOOL,
   sendFeishu,
   sendDingTalk,
   sendWecom,
@@ -210,6 +212,35 @@ test("buildApprovalMessage carries toolName and truncated reason", () => {
   assert.match(message.body, /sandbox escalation/);
 });
 
+test("buildQuestionMessage parses ask_user_question arguments", () => {
+  const message = buildQuestionMessage(fakeSession({ title: "写周报" }), {
+    type: "tool/call",
+    data: {
+      turn: 4,
+      name: "ask_user_question",
+      arguments: JSON.stringify({
+        questions: [{ id: "q1", header: "选择方案", question: "A 还是 B？" }],
+      }),
+    },
+  });
+  assert.equal(message.kind, "question");
+  assert.equal(message.title, "DSH · 等待回答");
+  assert.equal(message.toolName, ASK_USER_QUESTION_TOOL);
+  assert.equal(message.turn, 4);
+  assert.match(message.body, /「写周报」等待你的回答：选择方案：A 还是 B？/);
+  assert.equal(message.reason, "选择方案：A 还是 B？");
+});
+
+test("buildQuestionMessage falls back for unparsable arguments", () => {
+  const message = buildQuestionMessage(fakeSession(), {
+    type: "tool/call",
+    data: { name: "ask_user_question", arguments: "not-json" },
+  });
+  assert.equal(message.kind, "question");
+  assert.match(message.body, /等待你的回答：ask_user_question/);
+  assert.equal(message.reason, "");
+});
+
 // ── webhook senders ────────────────────────────────────────────────────────
 
 function stubFetch(respond) {
@@ -312,10 +343,26 @@ test("handleSessionEvent filters kinds and dispatches fire-and-forget", async ()
   assert.match(sent[1], /等待确认/);
 });
 
+test("handleSessionEvent notifies on ask_user_question tool calls", async () => {
+  const sent = [];
+  const cfg = normalizeConfig({ webhooks: { wecom: { enabled: true, url: "https://w" } } });
+  const impls = { wecom: (hookCfg, text) => { sent.push(text); return Promise.resolve(); } };
+  handleSessionEvent(cfg, fakeSession({ title: "T" }), {
+    type: "tool/call",
+    data: { turn: 2, name: "ask_user_question", arguments: JSON.stringify({ questions: [{ question: "继续吗？" }] }) },
+  }, impls, {});
+  await new Promise((resolve) => setTimeout(resolve, 10));
+  assert.equal(sent.length, 1);
+  assert.match(sent[0], /等待回答/);
+  assert.match(sent[0], /继续吗？/);
+});
+
 test("handleSessionEvent ignores unknown events and disabled triggers", () => {
   const sent = [];
   const cfg = normalizeConfig({ triggers: { approval: false } });
   handleSessionEvent(cfg, fakeSession(), { type: "approval/asked", data: { toolName: "bash" } }, { wecom: () => sent.push(1) }, {});
+  handleSessionEvent(cfg, fakeSession(), { type: "tool/call", data: { name: "ask_user_question", arguments: "{}" } }, { wecom: () => sent.push(1) }, {});
+  handleSessionEvent(cfg, fakeSession(), { type: "tool/call", data: { name: "bash", arguments: "{}" } }, { wecom: () => sent.push(1) }, {});
   handleSessionEvent(cfg, fakeSession(), { type: "assistant/chunk", data: {} }, { wecom: () => sent.push(1) }, {});
   assert.equal(sent.length, 0);
 });

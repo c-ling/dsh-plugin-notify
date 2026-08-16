@@ -29,6 +29,7 @@ DeepSeek Harness Web GUI 的消息提醒插件：任务回合执行结束、或�
 
 - `turn/end`：回合结束，按 `triggers.turnEndKinds` 过滤（completed/blocked/aborted/error，默认 completed+blocked）。
 - `approval/asked`：工具调用等待用户审批（宿主机渠道）。
+- `tool/call`（`name` 为 `ask_user_question`）：模型通过提问工具向用户提问，等待用户回答（宿主机渠道）。
 - 浏览器渠道额外覆盖等待用户确认的交互（审批/提问，来自会话快照的 pending 列表）。
 
 宿主机的系统/Webhook 渠道覆盖所有会话；浏览器渠道跟随当前打开的会话。
@@ -38,20 +39,20 @@ DeepSeek Harness Web GUI 的消息提醒插件：任务回合执行结束、或�
 从 GitHub 安装到 web profile（需要 `pnpm` 在 `PATH` 上；没有则用下面的 corepack 方式）：
 
 ```sh
-npx @deepseek-ai/dsh plugin --profile web add "github:c-ling/dsh-plugin-notify#v1.1.3"
+npx @deepseek-ai/dsh plugin --profile web add "github:c-ling/dsh-plugin-notify#v1.2.0"
 ```
 
 或使用已有的 `dsh` 命令：
 
 ```sh
-dsh plugin --profile web add "github:c-ling/dsh-plugin-notify#v1.1.3"
+dsh plugin --profile web add "github:c-ling/dsh-plugin-notify#v1.2.0"
 ```
 
 pnpm 不在 `PATH` 上时：
 
 ```sh
 cd ~/.dsh/profiles/web
-corepack pnpm add "github:c-ling/dsh-plugin-notify#v1.1.3"
+corepack pnpm add "github:c-ling/dsh-plugin-notify#v1.2.0"
 ```
 
 > `dsh plugin` 把参数原样转发给 pnpm，直接从本仓库拉取包（pnpm 9+，本机需装有 `git`）。
@@ -80,12 +81,12 @@ curl -s http://127.0.0.1:3080/plugins/dsh-plugin-notify/client.js | head -c 60
 ## 更新
 
 ```sh
-dsh plugin --profile web add "github:c-ling/dsh-plugin-notify#v1.1.3"
-# 或：npx @deepseek-ai/dsh plugin --profile web add "github:c-ling/dsh-plugin-notify#v1.1.3"
-# 或：cd ~/.dsh/profiles/web && corepack pnpm add "github:c-ling/dsh-plugin-notify#v1.1.3"
+dsh plugin --profile web add "github:c-ling/dsh-plugin-notify#v1.2.0"
+# 或：npx @deepseek-ai/dsh plugin --profile web add "github:c-ling/dsh-plugin-notify#v1.2.0"
+# 或：cd ~/.dsh/profiles/web && corepack pnpm add "github:c-ling/dsh-plugin-notify#v1.2.0"
 ```
 
-用新的 `#v1.1.3` 重新执行安装命令即可升级依赖；`cordis.patch.yml` 中的 loader 行保持不变。
+用新的 `#v1.2.0` 重新执行安装命令即可升级依赖；`cordis.patch.yml` 中的 loader 行保持不变。
 重启 `dsh web`，然后硬刷新页面。
 
 ## 卸载
@@ -119,6 +120,7 @@ node --test
 
 ## 更新日志
 
+- **v1.2.0** — 宿主机渠道支持 `ask_user_question` 提问通知：模型调用 `ask_user_question` 时，系统通知与飞书/钉钉/企业微信/通用 Webhook 会发送「等待回答」提醒；修复浏览器原生通知因固定 tag 导致连续审批/提问只显示首条的问题。
 - **v1.1.3** — README 结构规范化：默认 `README.md` 改为中文，英文文档移至 `README-en.md`（删除 `README-ZH.md`），安装命令统一固定到 `#v1.1.3`。
 - **v1.1.2** — README 拆分为默认英文 `README.md` + 中文 `README-ZH.md`（顶部互相切换），补充 `npx @deepseek-ai/dsh plugin ...` 安装方式与「更新」章节，安装命令统一固定到 `#v1.1.2`。
 - **v1.1.1** — 修复「设置 → 消息提醒」页在黑夜模式下的样式：保存按钮、开关、卡片/输入框边框、状态文字等统一改用 `--dsw-alias-*` 设计变量，跟随明暗主题。

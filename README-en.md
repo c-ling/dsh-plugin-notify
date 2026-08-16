@@ -35,6 +35,8 @@ All webhook channels share the same placeholders:
 - `turn/end`: fired when a turn ends, filtered by `triggers.turnEndKinds`
   (completed/blocked/aborted/error; default completed+blocked).
 - `approval/asked`: fired when a tool call waits for user approval (host channels).
+- `tool/call` (with `name` `ask_user_question`): fired when the model asks the
+  user a question through the interactive question tool (host channels).
 - The browser channel additionally covers interactions waiting for user confirmation
   (approval / question, from the pending list in the session snapshot).
 
@@ -47,20 +49,20 @@ Install into the web profile from GitHub (requires `pnpm` on `PATH`; otherwise u
 corepack fallback below):
 
 ```sh
-npx @deepseek-ai/dsh plugin --profile web add "github:c-ling/dsh-plugin-notify#v1.1.3"
+npx @deepseek-ai/dsh plugin --profile web add "github:c-ling/dsh-plugin-notify#v1.2.0"
 ```
 
 Or with an existing `dsh` binary:
 
 ```sh
-dsh plugin --profile web add "github:c-ling/dsh-plugin-notify#v1.1.3"
+dsh plugin --profile web add "github:c-ling/dsh-plugin-notify#v1.2.0"
 ```
 
 When `pnpm` is not on `PATH`:
 
 ```sh
 cd ~/.dsh/profiles/web
-corepack pnpm add "github:c-ling/dsh-plugin-notify#v1.1.3"
+corepack pnpm add "github:c-ling/dsh-plugin-notify#v1.2.0"
 ```
 
 > `dsh plugin` forwards its arguments to pnpm and fetches the package from this repo
@@ -92,12 +94,12 @@ It should print a factory bundle starting with `window.__ModuleLoader__.load({`;
 ## Update
 
 ```sh
-dsh plugin --profile web add "github:c-ling/dsh-plugin-notify#v1.1.3"
-# or: npx @deepseek-ai/dsh plugin --profile web add "github:c-ling/dsh-plugin-notify#v1.1.3"
-# or: cd ~/.dsh/profiles/web && corepack pnpm add "github:c-ling/dsh-plugin-notify#v1.1.3"
+dsh plugin --profile web add "github:c-ling/dsh-plugin-notify#v1.2.0"
+# or: npx @deepseek-ai/dsh plugin --profile web add "github:c-ling/dsh-plugin-notify#v1.2.0"
+# or: cd ~/.dsh/profiles/web && corepack pnpm add "github:c-ling/dsh-plugin-notify#v1.2.0"
 ```
 
-Re-running the install command with the new `#v1.1.3` pin upgrades the dependency;
+Re-running the install command with the new `#v1.2.0` pin upgrades the dependency;
 the loader row in `cordis.patch.yml` stays unchanged. Restart `dsh web`, then hard-refresh.
 
 ## Uninstall
@@ -141,6 +143,10 @@ Endpoints:
 
 ## Changelog
 
+- **v1.2.0** — Host channels now support `ask_user_question` notifications: when the model
+  calls `ask_user_question`, the system channel and Feishu/DingTalk/WeCom/generic webhooks
+  send a "waiting for answer" reminder. Also fixed browser native notifications only
+  showing the first pending notification because of a fixed notification tag.
 - **v1.1.3** — Normalize the README structure: the default `README.md` is now Chinese and
   the English doc moved to `README-en.md` (`README-ZH.md` removed); every install command is
   pinned to `#v1.1.3`.
