@@ -49,20 +49,20 @@ Install into the web profile from GitHub (requires `pnpm` on `PATH`; otherwise u
 corepack fallback below):
 
 ```sh
-npx @deepseek-ai/dsh plugin --profile web add "github:c-ling/dsh-plugin-notify#v1.2.0"
+npx @deepseek-ai/dsh plugin --profile web add "github:c-ling/dsh-plugin-notify#v1.3.0"
 ```
 
 Or with an existing `dsh` binary:
 
 ```sh
-dsh plugin --profile web add "github:c-ling/dsh-plugin-notify#v1.2.0"
+dsh plugin --profile web add "github:c-ling/dsh-plugin-notify#v1.3.0"
 ```
 
 When `pnpm` is not on `PATH`:
 
 ```sh
 cd ~/.dsh/profiles/web
-corepack pnpm add "github:c-ling/dsh-plugin-notify#v1.2.0"
+corepack pnpm add "github:c-ling/dsh-plugin-notify#v1.3.0"
 ```
 
 > `dsh plugin` forwards its arguments to pnpm and fetches the package from this repo
@@ -94,12 +94,12 @@ It should print a factory bundle starting with `window.__ModuleLoader__.load({`;
 ## Update
 
 ```sh
-dsh plugin --profile web add "github:c-ling/dsh-plugin-notify#v1.2.0"
-# or: npx @deepseek-ai/dsh plugin --profile web add "github:c-ling/dsh-plugin-notify#v1.2.0"
-# or: cd ~/.dsh/profiles/web && corepack pnpm add "github:c-ling/dsh-plugin-notify#v1.2.0"
+dsh plugin --profile web add "github:c-ling/dsh-plugin-notify#v1.3.0"
+# or: npx @deepseek-ai/dsh plugin --profile web add "github:c-ling/dsh-plugin-notify#v1.3.0"
+# or: cd ~/.dsh/profiles/web && corepack pnpm add "github:c-ling/dsh-plugin-notify#v1.3.0"
 ```
 
-Re-running the install command with the new `#v1.2.0` pin upgrades the dependency;
+Re-running the install command with the new `#v1.3.0` pin upgrades the dependency;
 the loader row in `cordis.patch.yml` stays unchanged. Restart `dsh web`, then hard-refresh.
 
 ## Uninstall
@@ -110,15 +110,24 @@ corepack pnpm remove dsh-plugin-notify   # or: dsh plugin --profile web remove d
 ```
 
 Also remove the matching `insert` row from `cordis.patch.yml`, then restart `dsh web`.
-Configuration data remains under `$DSH_HOME/storages/dsh-plugin-notify/config.json`; delete
-that directory to remove it completely.
+Configuration lives in the Harness settings document `$DSH_HOME/settings.yaml` under the
+`dsh-plugin-notify:` namespace (fallback storage under `$DSH_HOME/storages/dsh-plugin-notify/`);
+delete that section and directory to remove it completely.
 
 ## Config storage
 
-Configuration is stored in `$DSH_HOME/storages/dsh-plugin-notify/config.json` (overridable
-via `config.directory` in the plugin loader row). Webhook signature secrets are write-only:
-the API reads them back as empty strings and marks configured ones with `secretSet`. An empty
-string on write means “keep unchanged”; `clearSecrets` lists paths to clear. Webhook URLs and
+Since v1.3.0 the config is stored through the official Harness settings service when one is
+mounted: it persists into `$DSH_HOME/settings.yaml` under `dsh-plugin-notify:` (registered via
+`installSettingsSection` on the host, reactively mirrored on the browser via `settingsScope`).
+Without a settings provider the plugin falls back to the classic store
+`$DSH_HOME/storages/dsh-plugin-notify/config.json` (overridable via `config.directory`). The
+first start after upgrading seeds the base layer from an existing config.json, so no manual
+migration is needed.
+
+Feishu/DingTalk signature secrets are schema-declared write-only `role('secret')` fields: the
+settings document and every wire surface only expose a "configured" marker, never the plaintext.
+The API reads them back as empty strings and marks configured ones with `secretSet`; an empty
+string on write means "keep unchanged", and `clearSecrets` lists paths to clear. Webhook URLs and
 generic request headers are stored in plain text, so do not put sensitive credentials there
 (other than the Feishu/DingTalk signature secrets).
 
@@ -132,8 +141,9 @@ node --test
 The client is a hand-written factory-CJS bundle
 (`window.__ModuleLoader__.load({ id: "dsh-plugin-notify", factory })`) with no build step;
 its UI is registered through the `settings.section` and `shell.overlay` slots. The host half
-uses only Node built-in modules (no `@deepseek-ai/*` dependencies), registers three routes on
-the `webServer` service, and subscribes to the `session/event` stream.
+imports `@deepseek-ai/dsh-settings` / `@deepseek-ai/schemastery` lazily and optionally (it falls
+back to config.json whenever the packages are unresolvable or no settings provider is mounted),
+registers three routes on the `webServer` service, and subscribes to the `session/event` stream.
 
 Endpoints:
 
@@ -143,6 +153,13 @@ Endpoints:
 
 ## Changelog
 
+- **v1.3.0** — Adapt to DeepSeek Harness 0.1.1 (migration A): the config now persists through
+  the official settings document `$DSH_HOME/settings.yaml` (`installSettingsSection` +
+  reactive `settingsScope` reads); an existing config.json is migrated automatically as the
+  base layer, and the classic store remains the fallback without a settings provider. Feishu/
+  DingTalk signature secrets are schema-declared write-only `role('secret')` fields — no
+  plaintext on the settings document or any wire surface. External config changes (another tab,
+  a hand-edited settings.yaml) now take effect live in the browser.
 - **v1.2.0** — Host channels now support `ask_user_question` notifications: when the model
   calls `ask_user_question`, the system channel and Feishu/DingTalk/WeCom/generic webhooks
   send a "waiting for answer" reminder. Also fixed browser native notifications only
@@ -168,8 +185,8 @@ Endpoints:
   window is minimized (permission required, and the browser must stay running). Use the host
   system notification channel when the browser is fully closed.
 - Feishu/DingTalk signature secrets are write-only + read-sanitized and stored unencrypted in
-  the local `config.json`; do not put other sensitive credentials in generic-webhook URLs or
-  request headers.
+  the local `settings.yaml` (or the fallback `config.json`); do not put other sensitive
+  credentials in generic-webhook URLs or request headers.
 
 ## License
 
