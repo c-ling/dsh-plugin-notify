@@ -286,9 +286,11 @@ test("without an injectable settings service the plugin stays on config.json", a
   assert.equal(onDisk.system.enabled, true);
 });
 
-async function call(handler, method, bodyObject) {
+async function call(handler, method, bodyObject, headers) {
   const req = {
     method,
+    // The trust fence requires a loopback Host unless a test overrides it.
+    headers: { host: "127.0.0.1:3080", ...(headers ?? {}) },
     [Symbol.asyncIterator]: async function* () {
       if (bodyObject !== undefined) yield Buffer.from(JSON.stringify(bodyObject));
     },

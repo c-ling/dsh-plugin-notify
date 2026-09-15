@@ -29,6 +29,10 @@ import {
   handleSessionEvent,
   systemNotify,
   playSystemSound,
+  renderNotifierArg,
+  renderNotifierArgs,
+  isTrustedRequest,
+  isLoopbackHostname,
   apply,
 } from "../lib/index.js";
 
@@ -40,6 +44,139 @@ test("systemNotify uses osascript on darwin and rejects on unknown platforms", a
   assert.equal(calls[0].file, "osascript");
   assert.match(calls[0].args.join(" "), /display notification/);
   await assert.rejects(() => systemNotify("t", "b", async () => {}, () => "freebsd"), /不支持系统通知/);
+});
+
+// ── system.notifier escape hatch ───────────────────────────────────────────
+
+test("systemNotify runs the configured notifier instead of the OS default", async () => {
+  const calls = [];
+  await systemNotify("标题", "正文", async (file, args) => { calls.push({ file, args }); }, () => "darwin", {
+    command: "/opt/homebrew/bin/terminal-notifier",
+    args: ["-title", "{{title}}", "-message", "{{body}}"],
+  });
+  assert.equal(calls.length, 1);
+  assert.equal(calls[0].file, "/opt/homebrew/bin/terminal-notifier");
+  assert.deepEqual(calls[0].args, ["-title", "标题", "-message", "正文"]);
+});
+
+test("a custom notifier also works where the OS default has no branch at all", async () => {
+  const calls = [];
+  await systemNotify("t", "b", async (file, args) => { calls.push({ file, args }); }, () => "freebsd", {
+    command: "/usr/local/bin/notify-anything",
+    args: ["{{body}}"],
+  });
+  assert.deepEqual(calls[0], { file: "/usr/local/bin/notify-anything", args: ["b"] });
+});
+
+test("a blank notifier command falls back to the OS default", async () => {
+  const calls = [];
+  await systemNotify("标题", "正文", async (file, args) => { calls.push({ file, args }); }, () => "darwin", {
+    command: "",
+    args: ["{{body}}"],
+  });
+  assert.equal(calls[0].file, "osascript");
+});
+
+test("renderNotifierArg interpolates known tokens and leaves unknown ones untouched", () => {
+  assert.equal(renderNotifierArg("{{title}}", "T", "B"), "T");
+  assert.equal(renderNotifierArg("{{ body }}", "T", "B"), "B");
+  assert.equal(renderNotifierArg("前缀 {{title}} 后缀", "T", "B"), "前缀 T 后缀");
+  assert.equal(renderNotifierArg("{{unknown}}", "T", "B"), "{{unknown}}");
+});
+
+test("renderNotifierArgs tolerates a non-array", () => {
+  assert.deepEqual(renderNotifierArgs(null, "T", "B"), []);
+});
+
+test("normalizeConfig defaults system.notifier to the OS default, with no args", () => {
+  assert.deepEqual(normalizeConfig({}).system.notifier, { command: "", args: [] });
+});
+
+test("normalizeConfig keeps a configured notifier and drops malformed pieces", () => {
+  const kept = normalizeConfig({ system: { notifier: { command: "/tmp/n", args: ["-m", "{{body}}"] } } });
+  assert.deepEqual(kept.system.notifier, { command: "/tmp/n", args: ["-m", "{{body}}"] });
+
+  const repaired = normalizeConfig({ system: { notifier: { command: 42, args: "nope" } } });
+  assert.deepEqual(repaired.system.notifier, { command: "", args: [] });
+
+  const filtered = normalizeConfig({ system: { notifier: { command: "/tmp/n", args: ["ok", 7, null] } } });
+  assert.deepEqual(filtered.system.notifier.args, ["ok"]);
+});
+
+test("no default argument template is ever substituted", async () => {
+  // A tool-specific template would be wrong for every other tool, so a notifier
+  // configured without args runs with no args instead of inheriting one.
+  const fromEmpty = [];
+  await systemNotify("标题", "正文", async (file, args) => { fromEmpty.push({ file, args }); }, () => "darwin", {
+    command: "/tmp/wrapper",
+    args: [],
+  });
+  assert.deepEqual(fromEmpty[0], { file: "/tmp/wrapper", args: [] });
+
+  // The same config round-trips through normalization with args intact.
+  const cfg = normalizeConfig({ system: { notifier: { command: "/tmp/n", args: [] } } });
+  assert.deepEqual(cfg.system.notifier, { command: "/tmp/n", args: [] });
+});
+
+// ── request trust fence ────────────────────────────────────────────────────
+
+test("isLoopbackHostname accepts loopback forms and rejects public names", () => {
+  for (const name of ["localhost", "[::1]", "127.0.0.1", "127.1.2.3"]) {
+    assert.equal(isLoopbackHostname(name), true, name);
+  }
+  for (const name of ["evil.example", "128.0.0.1", "127.0.0.256", "notlocalhost", "10.0.0.1"]) {
+    assert.equal(isLoopbackHostname(name), false, name);
+  }
+});
+
+test("isTrustedRequest accepts loopback and a configured trusted host", () => {
+  // The Host fence binds non-browser clients even though they send no Origin.
+  assert.equal(isTrustedRequest({ host: "127.0.0.1:3080" }), true);
+  assert.equal(isTrustedRequest({ host: "localhost:3080" }), true);
+  assert.equal(isTrustedRequest({ host: "[::1]:3080" }), true);
+
+  assert.equal(isTrustedRequest({ host: "dsh.example:3443" }), false);
+  assert.equal(isTrustedRequest({ host: "dsh.example:3443" }, ["dsh.example:3443"]), true);
+  // An entry grants exactly one authority, not the whole hostname.
+  assert.equal(isTrustedRequest({ host: "dsh.example:9999" }, ["dsh.example:3443"]), false);
+});
+
+test("isTrustedRequest rejects the two browser confused-deputy paths", () => {
+  // Cross-site write from a malicious page.
+  assert.equal(isTrustedRequest({ host: "127.0.0.1:3080", origin: "https://evil.example" }), false);
+  assert.equal(isTrustedRequest({ host: "127.0.0.1:3080", "sec-fetch-site": "cross-site" }), false);
+  // DNS rebinding: the socket lands here but Host names the attacker's domain.
+  assert.equal(isTrustedRequest({ host: "evil.example:3080", origin: "http://evil.example:3080" }), false);
+  // Malformed and missing values fail closed.
+  assert.equal(isTrustedRequest({ host: "127.0.0.1:3080", origin: "not a url" }), false);
+  assert.equal(isTrustedRequest({}), false);
+  assert.equal(isTrustedRequest({ host: "" }), false);
+  // A same-origin browser request is allowed, with or without Fetch metadata.
+  assert.equal(isTrustedRequest({ host: "127.0.0.1:3080", origin: "http://127.0.0.1:3080" }), true);
+  assert.equal(isTrustedRequest({ host: "127.0.0.1:3080", origin: "http://127.0.0.1:3080", "sec-fetch-site": "same-origin" }), true);
+});
+
+test("normalizeConfig drops malformed trustedHosts entries", () => {
+  const cfg = normalizeConfig({ security: { trustedHosts: ["dsh.example:3443", "dsh.example:3443", "  ", 7, "https://evil.example/", "uid:pw@x:1"] } });
+  assert.deepEqual(cfg.security.trustedHosts, ["dsh.example:3443"]);
+});
+
+test("the config route refuses a cross-site write and applies nothing", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "dsh-plugin-notify-"));
+  const ctx = stubCtx(directory);
+  apply(ctx, { directory });
+  const route = ctx.routes.get("/dsh-plugin-notify/config");
+
+  const rejected = await call(route, "POST",
+    { config: { triggers: { turnEnd: false } } },
+    { host: "127.0.0.1:3080", origin: "https://evil.example", "sec-fetch-site": "cross-site" });
+  assert.equal(rejected.status, 403);
+  assert.equal(rejected.body.ok, false);
+
+  // The write did not land.
+  const after = await call(route, "GET");
+  assert.equal(after.status, 200);
+  assert.equal(after.body.config.triggers.turnEnd, true);
 });
 
 test("systemNotify builds a PowerShell WinRT toast on win32 with escaped text", async () => {
@@ -389,9 +526,12 @@ function stubCtx(directory) {
   return ctx;
 }
 
-async function call(handler, method, bodyObject) {
+async function call(handler, method, bodyObject, headers) {
   const req = {
     method,
+    // Every request carries a Host; the trust fence requires a loopback one
+    // unless a test overrides it.
+    headers: { host: "127.0.0.1:3080", ...(headers ?? {}) },
     [Symbol.asyncIterator]: async function* () {
       if (bodyObject !== undefined) yield Buffer.from(JSON.stringify(bodyObject));
     },

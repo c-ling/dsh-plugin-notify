@@ -2,3 +2,6 @@ node_modules/
 .DS_Store
 *.log
 npm-debug.log*
+
+# pnpm dependency resolution is not pinned for this plugin
+pnpm-lock.yaml

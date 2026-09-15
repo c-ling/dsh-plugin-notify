@@ -14,11 +14,76 @@ execution waits for user confirmation, plus a settings section to manage channel
 | Channel | Location | Notes |
 | --- | --- | --- |
 | Browser notification (in-page banner) + optional OS notification | Client | Two independent settings. **Browser notification** shows a text banner in the top-right while the page is visible. **OS notification** uses the browser Notification API, so it also fires when the tab is in the background or the window is minimized (browser notification permission required). Keep the browser running and use the host system channel if you leave the page entirely. |
-| System notification | Host | macOS `osascript` / Linux `notify-send` / Windows PowerShell native toast (Windows 10/11 action center); works even when the browser is closed. Optional system sound (macOS `afplay` / Windows built-in alert sound). |
+| System notification | Host | macOS `osascript` / Linux `notify-send` / Windows PowerShell native toast (Windows 10/11 action center); works even when the browser is closed. Optional system sound (macOS `afplay` / Windows built-in alert sound). Can be pointed at any notifier command via [`system.notifier`](#custom-notifier-systemnotifier). |
 | Feishu group bot | Host | Text message, optional signed secret (timestamp + HMAC-SHA256), optional custom message template. |
 | DingTalk group bot | Host | Text message, optional signed secret (timestamp + sign), optional custom message template. |
 | WeCom group bot | Host | Text message, optional custom message template. |
 | Generic webhook | Host | Custom URL + headers + JSON/text template. Placeholders: `{{title}} {{body}} {{kind}} {{sessionId}} {{turn}} {{toolName}} {{reason}} {{time}}`. Works with Slack / Discord / ntfy / Bark / ServerChan / PushPlus, etc. |
+
+## Custom notifier (`system.notifier`)
+
+The host channel calls the operating system's own notification command by default. In some
+environments that **fails silently** — most notably on macOS, where the identity behind
+`osascript display notification` is taken from the host app up the launch chain. If that app
+never asked for notification permission, macOS drops the notification while `osascript` still
+exits `0`, so the plugin has no way to notice.
+
+`system.notifier` is the escape hatch: set `command` and it is used instead, with `{{title}}` /
+`{{body}}` interpolated into `args` (the same template shape the webhook channels use; unknown
+tokens are left intact).
+
+**The plugin makes no assumption about the notifier and ships no default argument template** —
+`command` is run as given and `args` is its whole argv. Flags are tool-specific, so they must
+match whichever tool you point at:
+
+```yaml
+# ~/.dsh/profiles/web/cordis.patch.yml
+- id: dsh-plugin-notify
+  config:
+    system:
+      # terminal-notifier (brew install terminal-notifier)
+      notifier:
+        command: /opt/homebrew/bin/terminal-notifier
+        args: ["-title", "{{title}}", "-message", "{{body}}"]
+```
+
+The next two replace the same `notifier:` block:
+
+```yaml
+# alerter (without --timeout it waits forever)
+notifier:
+  command: /Users/you/.local/bin/alerter
+  args: ["--title", "{{title}}", "--message", "{{body}}", "--timeout", "30"]
+```
+
+```yaml
+# a self-compiled app bundle (UNUserNotificationCenter, own bundle id and icon)
+notifier:
+  command: /Users/you/Applications/DSH Notifier.app/Contents/MacOS/notifier
+  args: ["-title", "{{title}}", "-message", "{{body}}"]
+```
+
+⚠️ `command` **must be an absolute path**: the plugin runs it through `execFile`, with no shell
+in between, so `~` is not expanded (`~/.local/bin/alerter` just yields `ENOENT`). The same goes
+for environment variables such as `$HOME`.
+
+Two things worth knowing when choosing:
+
+- **terminal-notifier removed `-sender` in 3.0.0**, because it moved to `UserNotifications`,
+  which reads the real signed identity and allows no override. It therefore appears under its
+  own name in System Settings → Notifications and needs one authorisation.
+- **alerter still uses the older `NSUserNotification`, so `--sender` still works** to impersonate
+  an already-authorised bundle id. Where the host terminal never asked for notification
+  permission and you would rather not grant a new one, that is the way to get notifications
+  immediately; the cost is that they appear under the impersonated app's name and icon. A
+  self-compiled app bundle is the cleaner option if one authorisation is acceptable.
+
+An empty `command` keeps the OS default (and is the default value), so behaviour is unchanged
+unless you opt in; `args: []` means "run it with no arguments" and is a valid configuration.
+
+Unlike the OS default commands, **a real notifier reports real exit codes** (terminal-notifier
+uses `3` for "not authorized" and `4` when it cannot reach the notification service), so a failed
+delivery surfaces as a warning in the plugin log instead of a silent success.
 
 ## Message format
 
@@ -131,6 +196,46 @@ string on write means "keep unchanged", and `clearSecrets` lists paths to clear.
 generic request headers are stored in plain text, so do not put sensitive credentials there
 (other than the Feishu/DingTalk signature secrets).
 
+### API access control
+
+All three `/dsh-plugin-notify/*` routes sit behind a **trust fence** that defends the two
+confused-deputy paths a browser opens against a local HTTP API:
+
+- **DNS rebinding** — `Host` names the attacker's domain while the socket lands on this server.
+- **Cross-site requests** — a malicious page writing to the local API directly.
+
+This API is a *write* surface (`system.notifier.command` is executed), so neither path is
+acceptable. The fence binds browser and non-browser clients alike: over plain HTTP a browser may
+send neither `Origin` nor Fetch metadata, so `Host` is the only always-reliable signal.
+
+Loopback (`localhost` / `::1` / `127.x.x.x`) is trusted by default. When the deployment is served
+over a LAN, a tunnel or a reverse proxy, add its authority (exact `host:port`) to
+`security.trustedHosts`:
+
+```yaml
+- id: dsh-plugin-notify
+  config:
+    security:
+      trustedHosts: ["dsh.example:3443"]
+```
+
+Unset, the behaviour is loopback-only. DSH applies the same design to its `/api` bridge
+(`isTrustedApiRequest` in `dsh-client-connection`), but routes registered through
+`webServer.register` do **not** inherit it, so the plugin carries its own.
+
+**A gateway that rewrites Host / Origin needs no configuration at all.** `dsh-mobile`, for
+example, authenticates the caller on the LAN side and then forwards as the upstream:
+
+```js
+headers.host = upstream.host;                                // 127.0.0.1:3080
+headers.origin = upstream.origin;                            // http://127.0.0.1:3080
+headers["sec-fetch-site"] = "same-origin";
+```
+
+The plugin therefore receives a clean loopback same-origin request and the fence allows it. Only
+a reverse proxy that **passes the external Host through unchanged** (nginx and Caddy do by
+default, as does a bare tunnel) needs its authority listed in `security.trustedHosts`.
+
 ## Development
 
 ```sh
@@ -184,6 +289,13 @@ Endpoints:
   enabled, the browser Notification API can notify while the tab is in the background or the
   window is minimized (permission required, and the browser must stay running). Use the host
   system notification channel when the browser is fully closed.
+- Host system notifications depend on the notification identity of the process running
+  `dsh web`. On macOS that identity is inherited from the host app up the launch chain
+  (terminal / launcher): if it never asked for notification permission (Ghostty, for example,
+  defaults `app-notifications` to `never`), or `dsh web` is started by launchd with no GUI
+  session, `osascript` is dropped silently and still exits `0`. Point
+  [`system.notifier`](#custom-notifier-systemnotifier) at a notifier that carries its own
+  identity instead.
 - Feishu/DingTalk signature secrets are write-only + read-sanitized and stored unencrypted in
   the local `settings.yaml` (or the fallback `config.json`); do not put other sensitive
   credentials in generic-webhook URLs or request headers.
