@@ -1,0 +1,9 @@
+# Bundle layer for dsh-plugin-notify (DeepSeek Harness 0.2.1+).
+#
+# Installed as a bundle by `dsh plugin --profile <profile> add ...` (or from the
+# Plugins page), the package contributes this row. Profiles that install the
+# package manually as a plain dependency can instead add the same row to their
+# own cordis.patch.yml; do not do both.
+- insert:
+    - id: dsh-plugin-notify
+      name: 'dsh-plugin-notify'

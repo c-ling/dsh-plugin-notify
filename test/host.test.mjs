@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { mkdtemp, readFile } from "node:fs/promises";
+import { mkdtemp, readFile, stat } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createHmac } from "node:crypto";
@@ -30,6 +30,10 @@ import {
   systemNotify,
   playSystemSound,
   apply,
+  firstInvalidUrl,
+  isValidHttpUrl,
+  sessionTitle,
+  isDesktopHost,
 } from "../lib/index.js";
 
 // ── system channel ─────────────────────────────────────────────────────────
@@ -67,7 +71,7 @@ test("playSystemSound plays afplay on darwin and a wav via SoundPlayer on win32"
   await assert.rejects(() => playSystemSound(async () => {}, () => "linux"), /仅 macOS \/ Windows/);
 });
 
-// ── signatures ─────────────────────────────────────────────────────────────
+// ── signatures & templates ─────────────────────────────────────────────────
 
 test("feishuSign matches raw HMAC-SHA256 base64", () => {
   const secret = "test-secret";
@@ -83,8 +87,6 @@ test("dingtalkSign url-encodes base64 HMAC", () => {
   assert.ok(!dingtalkSign(secret, ts).includes("="));
 });
 
-// ── templates ──────────────────────────────────────────────────────────────
-
 test("renderTemplate replaces placeholders and keeps unknown ones", () => {
   const message = {
     title: "T", body: "B", kind: "turnEnd", sessionId: "s1", turn: 7,
@@ -96,33 +98,22 @@ test("renderTemplate replaces placeholders and keeps unknown ones", () => {
   assert.equal(renderTemplate("   ", message), "B");
 });
 
-test("renderChannelText uses the unified default template", () => {
+test("renderChannelText uses the unified default template and prefers bodyTemplate", () => {
   const message = { title: "T", body: "B", sessionId: "s1", turn: 7, time: "2025-01-01 00:00:00", kind: "turnEnd" };
   assert.equal(renderChannelText({}, message), DEFAULT_MESSAGE_TEMPLATE.replace("{{title}}", "T").replace("{{body}}", "B").replace("{{sessionId}}", "s1").replace("{{time}}", "2025-01-01 00:00:00"));
   assert.match(renderChannelText({}, message), /会话：s1/);
-});
-
-test("renderChannelText prefers the channel bodyTemplate", () => {
-  const message = { title: "T", body: "B", sessionId: "s1", turn: 7, time: "t", kind: "turnEnd" };
   assert.equal(renderChannelText({ bodyTemplate: "{{kind}}/{{title}}" }, message), "turnEnd/T");
-});
-
-test("normalizeConfig keeps per-channel bodyTemplate", () => {
-  const cfg = normalizeConfig({ webhooks: { wecom: { bodyTemplate: "{{title}}!" } } });
-  assert.equal(cfg.webhooks.feishu.bodyTemplate, "");
-  assert.equal(cfg.webhooks.wecom.bodyTemplate, "{{title}}!");
 });
 
 // ── config normalization ───────────────────────────────────────────────────
 
 test("normalizeConfig merges defaults for empty input", () => {
   const cfg = normalizeConfig(null);
-  assert.deepEqual(cfg.triggers.turnEndKinds, ["completed", "blocked", "aborted"]);
+  assert.deepEqual(cfg.triggers.turnEndKinds, ["completed", "blocked", "aborted", "error", "max-tokens"]);
   assert.equal(cfg.triggers.turnEnd, true);
   assert.equal(cfg.browser.toast, true);
   assert.equal(cfg.browser.native, false);
-  assert.equal("sound" in cfg.browser, false);
-  assert.equal("onlyWhenHidden" in cfg.browser, false);
+  assert.equal(cfg.system.sound, true);
   assert.deepEqual(cfg.webhooks.generic, []);
 });
 
@@ -134,11 +125,11 @@ test("normalizeConfig keeps the browser.native flag and rejects non-booleans", (
 
 test("normalizeConfig sanitizes bad values and dedupes kinds", () => {
   const cfg = normalizeConfig({
-    triggers: { turnEnd: "yes", turnEndKinds: ["completed", "completed", "nonsense"] },
+    triggers: { turnEnd: "yes", turnEndKinds: ["completed", "completed", "nonsense", "max-tokens"] },
     webhooks: { generic: [{ id: "", enabled: 1, url: 42, headers: { A: 1, B: "v" } }, ...Array.from({ length: 40 }, () => ({}))] },
   });
   assert.equal(cfg.triggers.turnEnd, true); // fallback
-  assert.deepEqual(cfg.triggers.turnEndKinds, ["completed"]);
+  assert.deepEqual(cfg.triggers.turnEndKinds, ["completed", "max-tokens"]);
   assert.equal(cfg.webhooks.generic.length, 32);
   assert.equal(cfg.webhooks.generic[0].id, "wh-1");
   assert.deepEqual(cfg.webhooks.generic[0].headers, { B: "v" });
@@ -175,13 +166,38 @@ test("mergeTestConfig overlays draft over saved and preserves stored secrets", (
   assert.deepEqual(mergeTestConfig(genericSaved, { headers: { B: "2" } }).headers, { A: "1", B: "2" });
 });
 
+test("isValidHttpUrl allows empty and http(s), rejects other schemes", () => {
+  assert.equal(isValidHttpUrl(""), true);
+  assert.equal(isValidHttpUrl("https://hook.example/x"), true);
+  assert.equal(isValidHttpUrl("http://127.0.0.1:9000/x"), true);
+  assert.equal(isValidHttpUrl("file:///etc/passwd"), false);
+  assert.equal(isValidHttpUrl("not a url"), false);
+  assert.equal(
+    firstInvalidUrl(normalizeConfig({ webhooks: { wecom: { url: "ftp://x" } } })),
+    "webhooks.wecom.url",
+  );
+  assert.equal(firstInvalidUrl(normalizeConfig({})), undefined);
+});
+
 // ── message building ───────────────────────────────────────────────────────
 
-function fakeSession({ id = "session-12345678", title } = {}) {
+function fakeSession({ id = "session-12345678", title, extraEvents = [] } = {}) {
   const events = [];
   if (title !== undefined) events.push({ type: "session/title", data: { title } });
-  return { id, events };
+  events.push(...extraEvents);
+  return {
+    id,
+    events,
+    snapshotEvents: () => events,
+  };
 }
+
+test("sessionTitle prefers the official title service and falls back to the log", () => {
+  const session = fakeSession({ title: "日志标题" });
+  assert.equal(sessionTitle(session, { get: () => ({ title: "服务标题" }) }), "服务标题");
+  assert.equal(sessionTitle(session), "日志标题");
+  assert.equal(sessionTitle(fakeSession({ title: "日志标题" }), { get: () => undefined }), "日志标题");
+});
 
 test("buildTurnEndMessage uses session title and kind labels", () => {
   const message = buildTurnEndMessage(fakeSession({ title: "写周报" }), {
@@ -193,6 +209,20 @@ test("buildTurnEndMessage uses session title and kind labels", () => {
   assert.match(message.body, /「写周报」回合 #3/);
 });
 
+test("buildTurnEndMessage covers max-tokens and interrupted", () => {
+  const maxTokens = buildTurnEndMessage(fakeSession({ title: "长任务" }), {
+    type: "turn/end",
+    data: { turn: 2, reason: { kind: "max-tokens" } },
+  });
+  assert.equal(maxTokens.turnEndKind, "max-tokens");
+  assert.match(maxTokens.body, /输出达到上限/);
+  const interrupted = buildTurnEndMessage(fakeSession(), {
+    type: "turn/end",
+    data: { turn: 1, reason: { kind: "interrupted" } },
+  });
+  assert.match(interrupted.body, /已中断/);
+});
+
 test("buildTurnEndMessage falls back to short id and truncates error text", () => {
   const message = buildTurnEndMessage(fakeSession(), {
     type: "turn/end",
@@ -202,10 +232,10 @@ test("buildTurnEndMessage falls back to short id and truncates error text", () =
   assert.ok(message.reason.length <= 201);
 });
 
-test("buildApprovalMessage carries toolName and truncated reason", () => {
+test("buildApprovalMessage prefers displayReason and carries toolName", () => {
   const message = buildApprovalMessage(fakeSession({ title: "迁移" }), {
     type: "approval/asked",
-    data: { id: "a1", toolName: "bash", reason: "sandbox escalation" },
+    data: { id: "a1", toolName: "bash", reason: "raw", displayReason: "sandbox escalation" },
   });
   assert.equal(message.kind, "approval");
   assert.match(message.body, /「迁移」需要确认：bash/);
@@ -322,22 +352,27 @@ test("planJobs selects only enabled configured channels", () => {
   assert.deepEqual(jobs.map((job) => job.label), ["system", "feishu", "generic:g1"]);
 });
 
-test("handleSessionEvent filters kinds and dispatches fire-and-forget", async () => {
+test("handleSessionEvent filters kinds, journals the message, and dispatches fire-and-forget", async () => {
   const sent = [];
+  const remembered = [];
   const cfg = normalizeConfig({ triggers: { turnEndKinds: ["completed", "error"] }, webhooks: { wecom: { enabled: true, url: "https://w" } } });
   const impls = { wecom: (hookCfg, text) => { sent.push(text); return Promise.resolve(); } };
   const logger = { warn() { throw new Error("should not warn"); } };
+  const remember = (message, dispatched) => remembered.push({ message, dispatched });
 
-  handleSessionEvent(cfg, fakeSession({ title: "T" }), { type: "turn/end", data: { turn: 1, reason: { kind: "blocked" } } }, impls, logger);
+  const blocked = handleSessionEvent(cfg, fakeSession({ title: "T" }), { type: "turn/end", data: { turn: 1, reason: { kind: "blocked" } } }, impls, logger, { remember });
+  assert.equal(blocked.dispatched, false);
   await new Promise((resolve) => setTimeout(resolve, 10));
-  assert.equal(sent.length, 0); // blocked filtered out
+  assert.equal(sent.length, 0);
+  assert.equal(remembered[0].dispatched, false);
 
-  handleSessionEvent(cfg, fakeSession({ title: "T" }), { type: "turn/end", data: { turn: 2, reason: { kind: "completed" } } }, impls, logger);
+  const completed = handleSessionEvent(cfg, fakeSession({ title: "T" }), { type: "turn/end", data: { turn: 2, reason: { kind: "completed" } } }, impls, logger, { remember });
+  assert.equal(completed.dispatched, true);
   await new Promise((resolve) => setTimeout(resolve, 10));
   assert.equal(sent.length, 1);
   assert.match(sent[0], /任务结束/);
 
-  handleSessionEvent(cfg, fakeSession(), { type: "approval/asked", data: { toolName: "bash" } }, impls, logger);
+  handleSessionEvent(cfg, fakeSession(), { type: "approval/asked", data: { toolName: "bash" } }, impls, logger, { remember });
   await new Promise((resolve) => setTimeout(resolve, 10));
   assert.equal(sent.length, 2);
   assert.match(sent[1], /等待确认/);
@@ -347,10 +382,11 @@ test("handleSessionEvent notifies on ask_user_question tool calls", async () => 
   const sent = [];
   const cfg = normalizeConfig({ webhooks: { wecom: { enabled: true, url: "https://w" } } });
   const impls = { wecom: (hookCfg, text) => { sent.push(text); return Promise.resolve(); } };
-  handleSessionEvent(cfg, fakeSession({ title: "T" }), {
+  const result = handleSessionEvent(cfg, fakeSession({ title: "T" }), {
     type: "tool/call",
     data: { turn: 2, name: "ask_user_question", arguments: JSON.stringify({ questions: [{ question: "继续吗？" }] }) },
   }, impls, {});
+  assert.equal(result.message.kind, "question");
   await new Promise((resolve) => setTimeout(resolve, 10));
   assert.equal(sent.length, 1);
   assert.match(sent[0], /等待回答/);
@@ -360,26 +396,31 @@ test("handleSessionEvent notifies on ask_user_question tool calls", async () => 
 test("handleSessionEvent ignores unknown events and disabled triggers", () => {
   const sent = [];
   const cfg = normalizeConfig({ triggers: { approval: false } });
-  handleSessionEvent(cfg, fakeSession(), { type: "approval/asked", data: { toolName: "bash" } }, { wecom: () => sent.push(1) }, {});
-  handleSessionEvent(cfg, fakeSession(), { type: "tool/call", data: { name: "ask_user_question", arguments: "{}" } }, { wecom: () => sent.push(1) }, {});
-  handleSessionEvent(cfg, fakeSession(), { type: "tool/call", data: { name: "bash", arguments: "{}" } }, { wecom: () => sent.push(1) }, {});
-  handleSessionEvent(cfg, fakeSession(), { type: "assistant/chunk", data: {} }, { wecom: () => sent.push(1) }, {});
+  assert.equal(handleSessionEvent(cfg, fakeSession(), { type: "approval/asked", data: { toolName: "bash" } }, { wecom: () => sent.push(1) }, {}), undefined);
+  assert.equal(handleSessionEvent(cfg, fakeSession(), { type: "tool/call", data: { name: "ask_user_question", arguments: "{}" } }, { wecom: () => sent.push(1) }, {}), undefined);
+  assert.equal(handleSessionEvent(cfg, fakeSession(), { type: "tool/call", data: { name: "bash", arguments: "{}" } }, { wecom: () => sent.push(1) }, {}), undefined);
+  assert.equal(handleSessionEvent(cfg, fakeSession(), { type: "assistant/chunk", data: {} }, { wecom: () => sent.push(1) }, {}), undefined);
   assert.equal(sent.length, 0);
 });
 
-// ── apply + routes ─────────────────────────────────────────────────────────
+// ── apply + authenticated Fetch routes ─────────────────────────────────────
 
-function stubCtx(directory) {
+function stubCtx() {
   const routes = new Map();
   const listeners = new Map();
   const ctx = {
     logger: { warn() {} },
     get(name) {
-      if (name === "webServer") return ctx.webServer;
+      if (name === "sessionTitle") return ctx.titleService;
       return undefined;
     },
-    webServer: {
-      register(entry) { routes.set(entry.path, entry.handler); },
+    connection: {
+      fetch: {
+        register(route) {
+          routes.set(route.path, route);
+          return () => { routes.delete(route.path); };
+        },
+      },
     },
     effect(fn) { fn(); },
     on(name, fn) { listeners.set(name, fn); },
@@ -389,77 +430,118 @@ function stubCtx(directory) {
   return ctx;
 }
 
-async function call(handler, method, bodyObject) {
-  const req = {
+async function call(route, method, body, query) {
+  const headers = {};
+  let payload;
+  if (body !== undefined) {
+    headers["content-type"] = "application/json";
+    payload = JSON.stringify(body);
+  }
+  const res = await route.fetch(new Request("http://dsh.test" + route.path + (query ?? ""), {
     method,
-    [Symbol.asyncIterator]: async function* () {
-      if (bodyObject !== undefined) yield Buffer.from(JSON.stringify(bodyObject));
-    },
-  };
-  let status;
-  const chunks = [];
-  const res = {
-    writeHead(code) { status = code; },
-    end(buf) { chunks.push(typeof buf === "string" ? Buffer.from(buf) : buf); },
-  };
-  await handler(req, res);
-  return { status, body: JSON.parse(Buffer.concat(chunks).toString("utf8")) };
+    headers,
+    body: payload,
+  }));
+  const text = await res.text();
+  return { status: res.status, body: text ? JSON.parse(text) : null };
 }
 
 test("routes serve config, persist writes, and enforce method dispatch", async () => {
   const directory = await mkdtemp(join(tmpdir(), "dsh-plugin-notify-"));
-  const ctx = stubCtx(directory);
+  const ctx = stubCtx();
   apply(ctx, { directory });
 
-  const getConfig = ctx.routes.get("/dsh-plugin-notify/config");
-  const getTest = ctx.routes.get("/dsh-plugin-notify/test");
-  assert.ok(getConfig);
-  assert.ok(getTest);
+  const configRoute = ctx.routes.get("/api/dsh-plugin-notify/config");
+  const testRoute = ctx.routes.get("/api/dsh-plugin-notify/test");
+  const lastRoute = ctx.routes.get("/api/dsh-plugin-notify/last");
+  const settingsRoute = ctx.routes.get("/api/dsh-plugin-notify/system-settings");
+  assert.ok(configRoute);
+  assert.ok(testRoute);
+  assert.ok(lastRoute);
+  assert.ok(settingsRoute);
 
-  const initial = await call(getConfig, "GET");
+  const initial = await call(configRoute, "GET");
   assert.equal(initial.status, 200);
   assert.equal(initial.body.ok, true);
   assert.equal(initial.body.config.triggers.turnEnd, true);
+  assert.deepEqual(initial.body.config.triggers.turnEndKinds, ["completed", "blocked", "aborted", "error", "max-tokens"]);
   assert.equal(initial.body.config.webhooks.feishu.secret, "");
+  assert.equal(initial.body.revision, 0);
+  assert.equal(typeof initial.body.meta.desktop, "boolean");
 
-  const saved = await call(getConfig, "POST", {
+  const saved = await call(configRoute, "POST", {
     config: { triggers: { turnEnd: false }, webhooks: { feishu: { enabled: true, url: "https://f", secret: "top" } } },
   });
   assert.equal(saved.status, 200);
   assert.equal(saved.body.config.triggers.turnEnd, false);
   assert.equal(saved.body.secretSet["webhooks.feishu.secret"], true);
   assert.equal(saved.body.config.webhooks.feishu.secret, "");
+  assert.equal(saved.body.revision, 1);
 
   // secret persists on disk, still redacted on read, kept on empty write
   const onDisk = JSON.parse(await readFile(join(directory, "config.json"), "utf8"));
   assert.equal(onDisk.webhooks.feishu.secret, "top");
+  const mode = (await stat(join(directory, "config.json"))).mode & 0o777;
+  assert.equal(mode, 0o600);
 
-  const kept = await call(getConfig, "POST", { config: { webhooks: { feishu: { secret: "" } } } });
+  const kept = await call(configRoute, "POST", { config: { webhooks: { feishu: { secret: "" } } }, expectedRevision: 1 });
   assert.equal(kept.body.secretSet["webhooks.feishu.secret"], true);
+  assert.equal(kept.body.revision, 2);
 
-  const cleared = await call(getConfig, "POST", { config: { webhooks: { feishu: { secret: "" } } }, clearSecrets: ["webhooks.feishu.secret"] });
+  const cleared = await call(configRoute, "POST", {
+    config: { webhooks: { feishu: { secret: "" } } },
+    clearSecrets: ["webhooks.feishu.secret"],
+    expectedRevision: 2,
+  });
   assert.equal(cleared.body.secretSet["webhooks.feishu.secret"], false);
 
-  // method dispatch: GET on test route → 405; unknown channel → 400
-  const methodCheck = await call(getTest, "GET");
-  assert.equal(methodCheck.status, 405);
+  const stale = await call(configRoute, "POST", { config: { system: { enabled: true } }, expectedRevision: 0 });
+  assert.equal(stale.status, 409);
+  assert.equal(stale.body.code, "stale-config");
 
-  const badChannel = await call(getTest, "POST", { channel: "carrier-pigeon" });
+  const invalid = await call(configRoute, "POST", { config: { webhooks: { feishu: { url: "file:///etc/passwd" } } }, expectedRevision: 3 });
+  assert.equal(invalid.status, 400);
+  assert.equal(invalid.body.code, "invalid-url");
+
+  const methodCheck = await call(testRoute, "GET");
+  assert.equal(methodCheck.status, 405);
+  const settingsMethodCheck = await call(settingsRoute, "GET");
+  assert.equal(settingsMethodCheck.status, 405);
+  const configMethodCheck = await call(configRoute, "DELETE");
+  assert.equal(configMethodCheck.status, 405);
+
+  const badChannel = await call(testRoute, "POST", { channel: "carrier-pigeon" });
   assert.equal(badChannel.status, 400);
+  assert.equal(badChannel.body.code, "unknown-channel");
 });
 
-test("postTest sends with the draft bodyTemplate without saving", async () => {
+test("POST config rejects oversized and malformed bodies", async () => {
   const directory = await mkdtemp(join(tmpdir(), "dsh-plugin-notify-"));
-  const ctx = stubCtx(directory);
+  const ctx = stubCtx();
   apply(ctx, { directory });
-  const configHandler = ctx.routes.get("/dsh-plugin-notify/config");
-  const testHandler = ctx.routes.get("/dsh-plugin-notify/test");
+  const configRoute = ctx.routes.get("/api/dsh-plugin-notify/config");
 
-  const saved = await call(configHandler, "POST", {
-    config: { webhooks: { wecom: { enabled: true, url: "https://wecom/hook", bodyTemplate: "" } } },
-  });
-  assert.equal(saved.status, 200);
+  const big = await call(configRoute, "POST", { config: { wecom: { bodyTemplate: "x".repeat(300 * 1024) } } });
+  assert.equal(big.status, 413);
+  assert.equal(big.body.code, "body-too-large");
 
+  const malformed = await (async () => {
+    const res = await configRoute.fetch(new Request("http://dsh.test/api/dsh-plugin-notify/config", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: "{not-json",
+    }));
+    return { status: res.status, body: await res.json() };
+  })();
+  assert.equal(malformed.status, 400);
+  assert.equal(malformed.body.code, "invalid-json");
+});
+
+test("postTest sends a disabled but configured channel and an unsaved generic draft", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "dsh-plugin-notify-"));
+  const ctx = stubCtx();
+  apply(ctx, { directory, webhooks: { wecom: { enabled: false, url: "https://wecom/hook" } } });
+  const testRoute = ctx.routes.get("/api/dsh-plugin-notify/test");
   const calls = [];
   const originalFetch = globalThis.fetch;
   globalThis.fetch = async (url, opts) => {
@@ -467,22 +549,63 @@ test("postTest sends with the draft bodyTemplate without saving", async () => {
     return { ok: true, status: 200, json: async () => ({ errcode: 0 }) };
   };
   try {
-    const res = await call(testHandler, "POST", { channel: "wecom", config: { bodyTemplate: "{{kind}}/{{title}}" } });
-    assert.equal(res.status, 200);
+    const wecom = await call(testRoute, "POST", { channel: "wecom", config: { bodyTemplate: "{{kind}}/{{title}}" } });
+    assert.equal(wecom.status, 200);
     assert.equal(calls.length, 1);
     assert.equal(JSON.parse(calls[0].opts.body).text.content, "test/DSH · 通知测试");
+
+    const generic = await call(testRoute, "POST", {
+      channel: "generic",
+      genericId: "wh-new",
+      config: { id: "wh-new", name: "new", enabled: false, url: "https://generic/hook", headers: {}, bodyTemplate: "" },
+    });
+    assert.equal(generic.status, 200);
+    assert.equal(calls.length, 2);
+    assert.equal(calls[1].url, "https://generic/hook");
   } finally {
     globalThis.fetch = originalFetch;
   }
 });
 
-test("session/event listener is registered", () => {
+test("last route returns the exact turn-end kind and honors the host kind filter", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "dsh-plugin-notify-"));
+  const ctx = stubCtx();
+  apply(ctx, { directory });
+  const listener = ctx.listeners.get("session/event");
+  assert.equal(typeof listener, "function");
+  const lastRoute = ctx.routes.get("/api/dsh-plugin-notify/last");
+
+  listener(fakeSession({ id: "s1", title: "T" }), { type: "turn/end", data: { turn: 1, reason: { kind: "max-tokens" } } });
+  const hit = await call(lastRoute, "GET", undefined, "?sessionId=s1&kinds=turnEnd");
+  assert.equal(hit.status, 200);
+  assert.equal(hit.body.message.turnEndKind, "max-tokens");
+  assert.equal(hit.body.dispatched, true);
+  assert.equal(hit.body.message.sessionId, "s1");
+
+  const missing = await call(lastRoute, "GET", undefined, "?sessionId=unknown&kinds=turnEnd");
+  assert.equal(missing.status, 200);
+  assert.equal(missing.body.message, null);
+
+  const ctx2 = stubCtx();
+  apply(ctx2, { directory: await mkdtemp(join(tmpdir(), "dsh-plugin-notify-")), triggers: { turnEndKinds: ["completed"] } });
+  const listener2 = ctx2.listeners.get("session/event");
+  listener2(fakeSession({ id: "s2" }), { type: "turn/end", data: { turn: 1, reason: { kind: "blocked" } } });
+  const filtered = await call(ctx2.routes.get("/api/dsh-plugin-notify/last"), "GET", undefined, "?sessionId=s2&kinds=turnEnd");
+  assert.equal(filtered.body.message.turnEndKind, "blocked");
+  assert.equal(filtered.body.dispatched, false);
+});
+
+test("session/event listener is registered and malformed events do not throw", () => {
   const ctx = stubCtx();
   apply(ctx, { directory: "/nonexistent" });
-  assert.equal(typeof ctx.listeners.get("session/event"), "function");
+  const listener = ctx.listeners.get("session/event");
+  assert.equal(typeof listener, "function");
+  assert.doesNotThrow(() => listener(undefined, undefined));
+  assert.doesNotThrow(() => listener(fakeSession(), { type: "turn/end", data: {} }));
 });
 
 test("TURN_END_KINDS and defaults are frozen constants", () => {
-  assert.deepEqual(TURN_END_KINDS, ["completed", "blocked", "aborted", "error"]);
+  assert.deepEqual(TURN_END_KINDS, ["completed", "blocked", "aborted", "error", "max-tokens", "interrupted"]);
   assert.equal(DEFAULT_CONFIG.triggers.turnEnd, true);
+  assert.equal(typeof isDesktopHost(), "boolean");
 });

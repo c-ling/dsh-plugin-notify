@@ -1,109 +1,129 @@
 # dsh-plugin-notify
 
-DeepSeek Harness Web GUI 的消息提醒插件：任务回合执行结束、或执行到需要用户确认时，按配置向所选渠道发送提醒，并在设置面板提供「消息提醒」菜单页。
+DeepSeek Harness **Web 与桌面端**的消息提醒插件：任务回合结束、执行等待用户确认、或模型通过提问工具等待回答时，按配置向所选渠道发送提醒，并在设置面板提供「消息提醒」菜单页。
 
 [English](README-en.md)
 
 [![dsh-plugin topic](https://img.shields.io/badge/topic-dsh--plugin-blue)](https://github.com/topics/dsh-plugin)
 [![license](https://img.shields.io/badge/license-MIT-green)](LICENSE)
 
+> 适用于 **DeepSeek Harness 0.2.1+**。旧版 0.1.x（含 0.1.5）不再作为兼容目标；升级 web 端后与桌面端使用同一套 API。
+
 ## 渠道
 
 | 渠道 | 位置 | 说明 |
 | --- | --- | --- |
-| 浏览器通知（页面内横幅）＋ 系统原生通知（可选） | 客户端 | 两个独立设置项：「浏览器通知」在页面可见时于右上角弹出文字横幅；「系统原生通知」通过浏览器 Notification API 弹出操作系统通知，标签页在后台/最小化时也能收到（需浏览器通知权限）；完全离开页面时请配合系统通知使用 |
-| 系统通知 | 宿主机 | macOS `osascript` / Linux `notify-send` / Windows PowerShell 原生 toast（Windows 10/11 操作中心），浏览器关闭也能收到；可选系统提示音（macOS `afplay` / Windows 系统内置提示音） |
-| 飞书群机器人 | 宿主机 | 文本消息，可选签名密钥（timestamp + HMAC-SHA256），可选自定义消息模板 |
-| 钉钉群机器人 | 宿主机 | 文本消息，可选加签（timestamp + sign），可选自定义消息模板 |
-| 企业微信群机器人 | 宿主机 | 文本消息，可选自定义消息模板 |
-| 通用 Webhook | 宿主机 | 自定义 URL + headers + JSON/文本模板，占位符 `{{title}} {{body}} {{kind}} {{sessionId}} {{turn}} {{toolName}} {{reason}} {{time}}`，可对接 Slack / Discord / ntfy / Bark / Server酱 / PushPlus 等 |
+| 页面内提醒（横幅） | 客户端 | 页面可见时在右上角弹出文字横幅；支持多会话、点击跳转会话，与原生通知相互独立。 |
+| 桌面通知 / 浏览器系统通知 | 客户端 | 桌面端通过 Electron 通知中心发送，窗口隐藏或最小化仍会提醒，无需浏览器授权；Web 端通过浏览器 Notification API 发送，需要浏览器通知权限。不受页面内提醒总开关影响。 |
+| 宿主系统通知 | 宿主机 | macOS `osascript` / Linux `notify-send` / Windows PowerShell 原生 toast；浏览器关闭也能收到。可选系统提示音。 |
+| 飞书群机器人 | 宿主机 | 文本消息，可选签名密钥（timestamp + HMAC-SHA256），可选自定义消息模板。 |
+| 钉钉群机器人 | 宿主机 | 文本消息，可选加签（timestamp + sign），可选自定义消息模板。 |
+| 企业微信群机器人 | 宿主机 | 文本消息，可选自定义消息模板。 |
+| 通用 Webhook | 宿主机 | 自定义 URL + headers + JSON/文本模板，可对接 Slack / Discord / ntfy / Bark / Server酱 / PushPlus 等。 |
+
+> 页面内横幅由 `browser.enabled` + `browser.toast` 控制；桌面/浏览器系统通知由 `browser.native` 独立控制，两者互不门控。
 
 ## 消息格式
 
 所有 Webhook 渠道共用同一套占位符：`{{title}} {{body}} {{kind}} {{sessionId}} {{turn}} {{toolName}} {{reason}} {{time}}`。
 
-- 飞书/钉钉/企业微信默认使用统一格式（标题 + 详情 + 会话 + 本地时间），在设置页的「消息模板」留空即用默认；填写后按你的模板渲染。
+- 飞书/钉钉/企业微信默认使用统一格式（标题 + 详情 + 会话 + 本地时间）；在设置页填写「消息模板」可覆盖。
 - 通用 Webhook 的模板留空时发送纯文本消息正文。
 
 ## 触发
 
-- `turn/end`：回合结束，按 `triggers.turnEndKinds` 过滤（completed/blocked/aborted/error，默认 completed+blocked）。
-- `approval/asked`：工具调用等待用户审批（宿主机渠道）。
-- `tool/call`（`name` 为 `ask_user_question`）：模型通过提问工具向用户提问，等待用户回答（宿主机渠道）。
-- 浏览器渠道额外覆盖等待用户确认的交互（审批/提问，来自会话快照的 pending 列表）。
+- `turn/end`：回合结束，按 `triggers.turnEndKinds` 过滤，支持
+  `completed` / `blocked` / `aborted` / `error` / `max-tokens` / `interrupted`。
+  默认 `completed, blocked, aborted, error, max-tokens`；`interrupted` 可选。
+- `approval/asked`：工具调用等待用户审批。
+- `tool/call`（`name` 为 `ask_user_question`）：模型通过提问工具向用户提问。
+- 浏览器渠道还覆盖 `plan-review` 等待确认交互，并支持多会话通知。
 
-宿主机的系统/Webhook 渠道覆盖所有会话；浏览器渠道跟随当前打开的会话。
+宿主系统/Webhook 渠道覆盖所有会话；浏览器渠道覆盖所有会话，并在点击横幅/原生通知时打开对应会话。
 
 ## 安装
 
-从 GitHub 安装到 web profile（需要 `pnpm` 在 `PATH` 上；没有则用下面的 corepack 方式）：
+### 方式 A：Bundle（0.2.x 推荐，Web/桌面端通用）
+
+包已声明 `dsh.bundle`，`dsh plugin` 会把它加入 profile 的 bundle 列表并自动激活：
 
 ```sh
-npx @deepseek-ai/dsh plugin --profile web add "github:c-ling/dsh-plugin-notify#v1.3.0"
+# 本地开发目录
+dsh plugin --profile web add "link:/absolute/path/to/dsh-plugin-notify"
+dsh plugin --profile desktop add "link:/absolute/path/to/dsh-plugin-notify"
+
+# 或从 GitHub 固定版本安装
+dsh plugin --profile web add "github:c-ling/dsh-plugin-notify#v1.4.0"
+dsh plugin --profile desktop add "github:c-ling/dsh-plugin-notify#v1.4.0"
+
+# 没有全局 dsh 时（仅 web profile；desktop profile 由 Desktop 自带 CLI/Plugins 页管理）
+npx @deepseek-ai/dsh plugin --profile web add "github:c-ling/dsh-plugin-notify#v1.4.0"
 ```
 
-或使用已有的 `dsh` 命令：
+> 桌面端也可以打开侧边栏 **Plugins → Add plugin**，在包名/路径输入框填入本地绝对路径或
+> `github:c-ling/dsh-plugin-notify#v1.4.0`，安装后按提示启用。
+
+安装/更新后重启对应宿主（客户端模块按进程缓存包裁决），然后硬刷新页面或重新打开桌面窗口。
+
+### 方式 B：手动 loader 行（已有 `link:` 安装可继续使用）
+
+如果不想让包进入 `dsh.profile.bundles`，可以只安装依赖并手动加一行：
 
 ```sh
-dsh plugin --profile web add "github:c-ling/dsh-plugin-notify#v1.3.0"
-```
-
-pnpm 不在 `PATH` 上时：
-
-```sh
+# 只安装依赖，不会自动加入 bundle 列表
 cd ~/.dsh/profiles/web
-corepack pnpm add "github:c-ling/dsh-plugin-notify#v1.3.0"
+corepack pnpm add "github:c-ling/dsh-plugin-notify#v1.4.0"
 ```
-
-> `dsh plugin` 把参数原样转发给 pnpm，直接从本仓库拉取包（pnpm 9+，本机需装有 `git`）。
-> 安装时若看到 `declares no dsh.bundle — installed as a plain dependency` 的提示属正常现象：
-> 本插件不是 profile bundle 层，而是通过下面的 loader 行激活。
-
-然后在 `~/.dsh/profiles/web/cordis.patch.yml` 增加一行插入：
 
 ```yaml
+# ~/.dsh/profiles/<profile>/cordis.patch.yml
 - insert:
-    - id: notify
+    - id: dsh-plugin-notify
       name: 'dsh-plugin-notify'
 ```
 
-重启 `dsh web`（client-modules 按进程缓存包裁决，新包必须重启宿主），然后硬刷新页面。
-设置页位于「设置 → 消息提醒」。
+**两种方式二选一**：同一 profile 不要同时把包加入 bundle 列表又手写 loader 行。
 
 ## 验证
 
 ```sh
-curl -s http://127.0.0.1:3080/plugins/dsh-plugin-notify/client.js | head -c 60
+# 未认证访问应返回 401，说明路由已注册且受 Connection 保护
+curl -s -o /dev/null -w '%{http_code}\n' http://127.0.0.1:3080/api/dsh-plugin-notify/config
+curl -s -o /dev/null -w '%{http_code}\n' http://127.0.0.1:56928/api/dsh-plugin-notify/config
+
+# 旧匿名路由应返回 404
+curl -s -o /dev/null -w '%{http_code}\n' http://127.0.0.1:3080/dsh-plugin-notify/config
 ```
 
-应输出 `window.__ModuleLoader__.load({` 开头的 factory bundle；设置页「设置 → 消息提醒」可配置并逐渠道发送测试消息。
+在 **设置 → 消息提醒** 中可配置渠道并逐渠道发送测试消息。桌面端会显示桌面徽标，原生通知测试应出现在系统通知中心。
 
 ## 更新
 
 ```sh
-dsh plugin --profile web add "github:c-ling/dsh-plugin-notify#v1.3.0"
-# 或：npx @deepseek-ai/dsh plugin --profile web add "github:c-ling/dsh-plugin-notify#v1.3.0"
-# 或：cd ~/.dsh/profiles/web && corepack pnpm add "github:c-ling/dsh-plugin-notify#v1.3.0"
+dsh plugin --profile web add "github:c-ling/dsh-plugin-notify#v1.4.0"
+dsh plugin --profile desktop add "github:c-ling/dsh-plugin-notify#v1.4.0"
 ```
 
-用新的 `#v1.3.0` 重新执行安装命令即可升级依赖；`cordis.patch.yml` 中的 loader 行保持不变。
-重启 `dsh web`，然后硬刷新页面。
+手动 loader 方式则用新的 `#v1.4.0` 重新执行安装命令，loader 行保持不变。更新后重启宿主并硬刷新。
 
 ## 卸载
 
 ```sh
-cd ~/.dsh/profiles/web
-corepack pnpm remove dsh-plugin-notify   # 或 dsh plugin --profile web remove dsh-plugin-notify
+dsh plugin --profile web remove dsh-plugin-notify
+dsh plugin --profile desktop remove dsh-plugin-notify
 ```
 
-同时删除 `cordis.patch.yml` 中对应的 insert 行，然后重启 `dsh web`。
-配置数据保存在 Harness 设置文档 `$DSH_HOME/settings.yaml` 的 `dsh-plugin-notify:` 段（回退存储在 `$DSH_HOME/storages/dsh-plugin-notify/`），删除该段与目录即可彻底清除。
+手动 loader 方式需同时删除 `cordis.patch.yml` 中对应的 `insert` 行，然后重启宿主。
+配置数据保存在 `$DSH_HOME/storages/dsh-plugin-notify/config.json`；彻底清除时删除该目录即可。
 
 ## 配置存储
 
-自 v1.3.0 起配置优先存入 Harness 官方设置服务：挂载了 settings provider 的环境里，配置写入 `$DSH_HOME/settings.yaml` 的 `dsh-plugin-notify:` 命名空间（宿主端经 `installSettingsSection` 注册，浏览器端通过 `settingsScope` 镜像响应式读取）；没有 settings provider 时自动回退到经典存储 `$DSH_HOME/storages/dsh-plugin-notify/config.json`（可通过插件行的 `config.directory` 覆盖）。升级后首次启动会把既有 config.json 作为 base 一次性迁移，无需手动操作。
+- 唯一持久化位置：`$DSH_HOME/storages/dsh-plugin-notify/config.json`（可通过插件行 `config.directory` 覆盖）。
+- 文件以 `0600` 权限原子写入；写入在宿主进程内串行化，并带 `revision` 乐观并发保护。多个窗口同时编辑时，后保存者会收到 409 并提示重新加载。
+- 插件行 config 作为组合基础层；0.2.x 的一次性 `settings.yaml` 导入若按 entry id 落到本插件，也会作为基础层被读取。`config.json` 存在时优先使用它。
+- Web 与桌面端共享同一份 `$DSH_HOME`，因此也共享同一份通知配置。
 
-飞书/钉钉签名密钥按 schema 声明为 `role('secret')` 只写字段：设置文档与所有 wire 面都看不到明文，只暴露「是否已配置」标记；接口读回空串并用 `secretSet` 标记，写入时空串表示保持不变，`clearSecrets` 列出要清除的路径。Webhook 地址与通用请求头以明文保存，请勿在其中放置敏感凭据（除飞书/钉钉签名密钥外）。
+飞书/钉钉签名密钥按只写字段处理：GET 只返回空串和 `secretSet` 标记；POST 空串表示保持原值，`clearSecrets` 列出要清除的路径。Webhook 地址与通用请求头以明文保存，请勿在其中放置其他敏感凭据。
 
 ## 开发
 
@@ -112,28 +132,36 @@ node --check lib/index.js lib/client.js
 node --test
 ```
 
-客户端为手写 factory-CJS bundle（`window.__ModuleLoader__.load({ id: "dsh-plugin-notify", factory })`），无构建步骤；UI 通过 `settings.section` 与 `shell.overlay` 插槽注册。宿主端对 `@deepseek-ai/dsh-settings` / `@deepseek-ai/schemastery` 做惰性可选导入（包不可解析或无 settings provider 时自动回退 config.json），通过 `webServer` 服务注册三条路由并订阅 `session/event` 事件流。
+- 客户端为手写 factory-CJS bundle（`window.__ModuleLoader__.load({ id: "dsh-plugin-notify", factory })`），无构建步骤；UI 通过 `settings.section` 与 `shell.overlay` 注册。
+- 宿主端不依赖任何 `@deepseek-ai/*` 运行时包；通过 `ctx.connection.fetch` 注册认证路由，订阅 `session/event`，并用 `ctx.sessionTitle`（可选）读取会话标题。
 
-接口：
+接口（均需 Connection 认证，浏览器实际访问 `/api` 前缀）：
 
-- `GET  /dsh-plugin-notify/config` — 脱敏后的当前配置 + secretSet
-- `POST /dsh-plugin-notify/config` — `{ config, clearSecrets? }` 整体替换用户可编辑配置
-- `POST /dsh-plugin-notify/test` — `{ channel: "system" | "feishu" | "dingtalk" | "wecom" | "generic", genericId? }` 发送测试消息
+- `GET  /api/dsh-plugin-notify/config` — 脱敏配置 + `secretSet` + `revision` + `meta`
+- `POST /api/dsh-plugin-notify/config` — `{ config, clearSecrets?, expectedRevision? }`
+- `POST /api/dsh-plugin-notify/test` — `{ channel, genericId?, config?, sound? }` 发送测试消息
+- `GET  /api/dsh-plugin-notify/last?sessionId=&kinds=` — 最近一条已匹配通知（浏览器用于精确回合结束原因）
+- `POST /api/dsh-plugin-notify/system-settings` — 打开系统通知设置（桌面端）
 
 ## 更新日志
 
-- **v1.3.0** — 适配 DeepSeek Harness 0.1.1（迁移 A）：配置优先存入官方设置文档 `$DSH_HOME/settings.yaml`（`installSettingsSection` + `settingsScope` 响应式读取），旧 `config.json` 自动作为 base 迁移、无 settings provider 时仍回退经典存储；飞书/钉钉签名密钥改为 schema `role('secret')` 只写字段，设置文档与 wire 面均不可见明文；浏览器端外部配置变更（其他标签页/手改 YAML）现在实时生效，无需刷新。
-- **v1.2.0** — 宿主机渠道支持 `ask_user_question` 提问通知：模型调用 `ask_user_question` 时，系统通知与飞书/钉钉/企业微信/通用 Webhook 会发送「等待回答」提醒；修复浏览器原生通知因固定 tag 导致连续审批/提问只显示首条的问题。
-- **v1.1.3** — README 结构规范化：默认 `README.md` 改为中文，英文文档移至 `README-en.md`（删除 `README-ZH.md`），安装命令统一固定到 `#v1.1.3`。
-- **v1.1.2** — README 拆分为默认英文 `README.md` + 中文 `README-ZH.md`（顶部互相切换），补充 `npx @deepseek-ai/dsh plugin ...` 安装方式与「更新」章节，安装命令统一固定到 `#v1.1.2`。
-- **v1.1.1** — 修复「设置 → 消息提醒」页在黑夜模式下的样式：保存按钮、开关、卡片/输入框边框、状态文字等统一改用 `--dsw-alias-*` 设计变量，跟随明暗主题。
-- **v1.1.0** — 新增浏览器系统原生通知、Windows 系统通知与提示音，浏览器与原生通知拆分为独立设置项。
-- **v1.0.0** — 首个 GitHub 版本：浏览器横幅、系统通知、飞书/钉钉/企业微信/通用 Webhook 渠道与设置页。
+- **v1.4.0** — 适配 DeepSeek Harness 0.2.1+（Web + 桌面端）：客户端改用 `sessions.list` + `uiSession.sessionStatus`，页面内提醒恢复并支持多会话、点击跳转；宿主路由迁移到 `ctx.connection.fetch` 并强制认证；配置改为 `config.json` + revision 并发保护；新增 `max-tokens` / `interrupted` 结束原因；桌面端使用 Electron 原生通知，Toast 适配窗口 chrome；新增 `dsh.bundle`，可由 Plugins 页安装。
+- **v1.3.0** — 适配 DeepSeek Harness 0.1.1（迁移 A）：配置优先存入官方设置文档（`installSettingsSection` + `settingsScope`），旧 `config.json` 自动作为 base 迁移；飞书/钉钉签名密钥改为 schema `role('secret')` 只写字段。（0.2.1 起该机制已被上游移除，本版删除。）
+- **v1.2.0** — 宿主机渠道支持 `ask_user_question` 提问通知；修复浏览器原生通知固定 tag 导致连续审批/提问只显示首条。
+- **v1.1.3** — README 结构规范化：默认 `README.md` 为中文，英文文档移至 `README-en.md`。
+- **v1.1.2** — README 拆分为默认英文 + 中文，补充 `npx` 安装方式与「更新」章节。
+- **v1.1.1** — 修复设置页黑夜模式样式，统一使用 `--dsw-alias-*` 设计变量。
+- **v1.1.0** — 新增浏览器系统原生通知、Windows 系统通知与提示音。
+- **v1.0.0** — 首个 GitHub 版本：浏览器横幅、系统通知、飞书/钉钉/企业微信/通用 Webhook 与设置页。
 
 ## 已知限制
 
-- 浏览器渠道默认是页面内文字横幅；开启「系统原生通知」后，标签页在后台或窗口最小化时也会通过浏览器 Notification API 弹出系统通知（需要浏览器通知权限，且浏览器必须保持运行）。浏览器完全关闭时请使用宿主机系统通知渠道。
-- 飞书/钉钉签名密钥仅做「只写 + 读回脱敏」，保存在本地 `settings.yaml`（或回退 `config.json`）中但未加密；请勿在通用 Webhook 的地址或请求头中放置其他敏感凭据。
+- macOS/Windows 的系统通知开关无法通过 Web API 读取；桌面端不再显示可能失真的“已授权”状态，改为提示与「打开系统通知设置」按钮。
+- 桌面通知点击会尝试 `window.focus()` 并打开会话；如果桌面窗口已被隐藏到系统托盘，Electron 未向插件暴露“恢复窗口”接口，可能无法自动拉回窗口。
+- Windows 的 Electron 通知依赖应用 AUMID；若系统通知中心不显示，请改用宿主系统通知渠道。
+- 浏览器原生通知需要浏览器授权，且页面/宿主必须保持运行；完全退出桌面或浏览器时请使用宿主系统通知/Webhook。
+- 宿主系统通知与桌面通知同时开启可能产生重复提醒；设置页会提示。
+- 飞书/钉钉签名密钥只做只写 + 读回脱敏，未加密存储在本地 `config.json`。
 
 ## License
 

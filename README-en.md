@@ -1,135 +1,150 @@
 # dsh-plugin-notify
 
-Message reminders for the DeepSeek Harness web GUI: browser, system, webhook
-(Feishu/DingTalk/WeCom/generic JSON) and sound notifications when a task turn finishes or
-execution waits for user confirmation, plus a settings section to manage channels.
+Message reminders for **DeepSeek Harness Web and Desktop**: in-page banners, native
+desktop notifications, host system notifications, and Feishu/DingTalk/WeCom/generic
+webhooks when a task turn ends, execution waits for user confirmation, or an interactive
+question arrives. Includes a **Settings → Notifications** section.
 
 [中文](README.md)
 
 [![dsh-plugin topic](https://img.shields.io/badge/topic-dsh--plugin-blue)](https://github.com/topics/dsh-plugin)
 [![license](https://img.shields.io/badge/license-MIT-green)](LICENSE)
 
+> Targets **DeepSeek Harness 0.2.1+**. Older 0.1.x (including 0.1.5) is no longer a
+> compatibility target; after updating the web side, Web and Desktop use the same API.
+
 ## Channels
 
 | Channel | Location | Notes |
 | --- | --- | --- |
-| Browser notification (in-page banner) + optional OS notification | Client | Two independent settings. **Browser notification** shows a text banner in the top-right while the page is visible. **OS notification** uses the browser Notification API, so it also fires when the tab is in the background or the window is minimized (browser notification permission required). Keep the browser running and use the host system channel if you leave the page entirely. |
-| System notification | Host | macOS `osascript` / Linux `notify-send` / Windows PowerShell native toast (Windows 10/11 action center); works even when the browser is closed. Optional system sound (macOS `afplay` / Windows built-in alert sound). |
-| Feishu group bot | Host | Text message, optional signed secret (timestamp + HMAC-SHA256), optional custom message template. |
-| DingTalk group bot | Host | Text message, optional signed secret (timestamp + sign), optional custom message template. |
-| WeCom group bot | Host | Text message, optional custom message template. |
-| Generic webhook | Host | Custom URL + headers + JSON/text template. Placeholders: `{{title}} {{body}} {{kind}} {{sessionId}} {{turn}} {{toolName}} {{reason}} {{time}}`. Works with Slack / Discord / ntfy / Bark / ServerChan / PushPlus, etc. |
+| In-page reminders (banner) | Client | Text banner in the top-right while the page is visible; supports multiple sessions and click-to-open, independent of native notifications. |
+| Desktop / browser system notifications | Client | Desktop uses the Electron notification center, works while the window is hidden or minimized, and needs no browser permission. Web uses the browser Notification API and requires browser permission. Independent of the in-page reminder switch. |
+| Host system notification | Host | macOS `osascript` / Linux `notify-send` / Windows PowerShell toast; works with the browser closed. Optional system sound. |
+| Feishu group bot | Host | Text message, optional signed secret (timestamp + HMAC-SHA256), optional template. |
+| DingTalk group bot | Host | Text message, optional sign (timestamp + sign), optional template. |
+| WeCom group bot | Host | Text message, optional template. |
+| Generic webhook | Host | Custom URL + headers + JSON/text template for Slack / Discord / ntfy / Bark / ServerChan / PushPlus, etc. |
+
+> The in-page banner is controlled by `browser.enabled` + `browser.toast`; desktop/browser system notifications are controlled independently by `browser.native`.
 
 ## Message format
 
-All webhook channels share the same placeholders:
+All webhook channels share the placeholders
 `{{title}} {{body}} {{kind}} {{sessionId}} {{turn}} {{toolName}} {{reason}} {{time}}`.
 
-- Feishu/DingTalk/WeCom use a unified default format (title + details + session + local time).
-  Leave the **Message template** field empty in settings to use the default; fill it to render
-  with your own template.
-- The generic webhook sends the plain-text message body when its template is empty.
+- Feishu/DingTalk/WeCom use a unified default format (title + details + session + local time);
+  fill **Message template** to override it.
+- A generic webhook with an empty template sends the plain-text message body.
 
 ## Triggers
 
-- `turn/end`: fired when a turn ends, filtered by `triggers.turnEndKinds`
-  (completed/blocked/aborted/error; default completed+blocked).
-- `approval/asked`: fired when a tool call waits for user approval (host channels).
-- `tool/call` (with `name` `ask_user_question`): fired when the model asks the
-  user a question through the interactive question tool (host channels).
-- The browser channel additionally covers interactions waiting for user confirmation
-  (approval / question, from the pending list in the session snapshot).
+- `turn/end`: filtered by `triggers.turnEndKinds` —
+  `completed` / `blocked` / `aborted` / `error` / `max-tokens` / `interrupted`.
+  Default: `completed, blocked, aborted, error, max-tokens`; `interrupted` is opt-in.
+- `approval/asked`: a tool call waits for user approval.
+- `tool/call` with `ask_user_question`: the model asks the user a question.
+- The browser channel also covers `plan-review` pending interactions and all sessions.
 
-Host system/webhook channels cover all sessions; the browser channel follows the currently
-open session.
+Host system/webhook channels cover every session. The browser channel covers every session
+too and opens the matching session when its banner/native notification is clicked.
 
 ## Install
 
-Install into the web profile from GitHub (requires `pnpm` on `PATH`; otherwise use the
-corepack fallback below):
+### A. Bundle (recommended on 0.2.x; Web and Desktop)
+
+The package declares `dsh.bundle`; `dsh plugin` adds it to the profile's bundle list and
+activates it automatically:
 
 ```sh
-npx @deepseek-ai/dsh plugin --profile web add "github:c-ling/dsh-plugin-notify#v1.3.0"
+# local checkout
+dsh plugin --profile web add "link:/absolute/path/to/dsh-plugin-notify"
+dsh plugin --profile desktop add "link:/absolute/path/to/dsh-plugin-notify"
+
+# or a pinned GitHub release
+dsh plugin --profile web add "github:c-ling/dsh-plugin-notify#v1.4.0"
+dsh plugin --profile desktop add "github:c-ling/dsh-plugin-notify#v1.4.0"
+
+# without a global dsh (web only; the desktop profile is managed by the Desktop CLI/Plugins page)
+npx @deepseek-ai/dsh plugin --profile web add "github:c-ling/dsh-plugin-notify#v1.4.0"
 ```
 
-Or with an existing `dsh` binary:
+> On Desktop you can also open **Plugins → Add plugin** and enter the local absolute path or
+> `github:c-ling/dsh-plugin-notify#v1.4.0`, then enable it.
+
+Restart the host after installing/updating (client-modules caches package verdicts per
+process), then hard-refresh the page or reopen the Desktop window.
+
+### B. Manual loader row (existing `link:` installs)
+
+If you do not want the package in `dsh.profile.bundles`, install it as a dependency and add
+one row:
 
 ```sh
-dsh plugin --profile web add "github:c-ling/dsh-plugin-notify#v1.3.0"
-```
-
-When `pnpm` is not on `PATH`:
-
-```sh
+# dependency only; does not add the package to the bundle list
 cd ~/.dsh/profiles/web
-corepack pnpm add "github:c-ling/dsh-plugin-notify#v1.3.0"
+corepack pnpm add "github:c-ling/dsh-plugin-notify#v1.4.0"
 ```
-
-> `dsh plugin` forwards its arguments to pnpm and fetches the package from this repo
-> (pnpm 9+, `git` required). The warning
-> `declares no dsh.bundle — installed as a plain dependency` is expected: this plugin is
-> not a profile bundle layer; it is activated by the loader row below.
-
-Then add a loader row to `~/.dsh/profiles/web/cordis.patch.yml`:
 
 ```yaml
+# ~/.dsh/profiles/<profile>/cordis.patch.yml
 - insert:
-    - id: notify
+    - id: dsh-plugin-notify
       name: 'dsh-plugin-notify'
 ```
 
-Restart `dsh web` (client-modules caches package verdicts per process; new packages require a
-host restart), then hard-refresh the page. The settings page appears under
-**Settings → Message reminders**.
+**Choose one mode**: do not both add the bundle and hand-write the loader row for the same
+profile.
 
 ## Verify
 
 ```sh
-curl -s http://127.0.0.1:3080/plugins/dsh-plugin-notify/client.js | head -c 60
+# Unauthenticated access should return 401 (route registered + protected by Connection)
+curl -s -o /dev/null -w '%{http_code}\n' http://127.0.0.1:3080/api/dsh-plugin-notify/config
+curl -s -o /dev/null -w '%{http_code}\n' http://127.0.0.1:56928/api/dsh-plugin-notify/config
+
+# The old anonymous route should return 404
+curl -s -o /dev/null -w '%{http_code}\n' http://127.0.0.1:3080/dsh-plugin-notify/config
 ```
 
-It should print a factory bundle starting with `window.__ModuleLoader__.load({`; in
-**Settings → Message reminders** you can configure each channel and send a test message.
+Use **Settings → Notifications** to configure channels and send per-channel tests. Desktop
+shows a Desktop badge; the native notification test should appear in the system notification
+center.
 
 ## Update
 
 ```sh
-dsh plugin --profile web add "github:c-ling/dsh-plugin-notify#v1.3.0"
-# or: npx @deepseek-ai/dsh plugin --profile web add "github:c-ling/dsh-plugin-notify#v1.3.0"
-# or: cd ~/.dsh/profiles/web && corepack pnpm add "github:c-ling/dsh-plugin-notify#v1.3.0"
+dsh plugin --profile web add "github:c-ling/dsh-plugin-notify#v1.4.0"
+dsh plugin --profile desktop add "github:c-ling/dsh-plugin-notify#v1.4.0"
 ```
 
-Re-running the install command with the new `#v1.3.0` pin upgrades the dependency;
-the loader row in `cordis.patch.yml` stays unchanged. Restart `dsh web`, then hard-refresh.
+For manual loader installs, re-run the install command with the new `#v1.4.0`; the loader row
+stays unchanged. Restart the host and hard-refresh.
 
 ## Uninstall
 
 ```sh
-cd ~/.dsh/profiles/web
-corepack pnpm remove dsh-plugin-notify   # or: dsh plugin --profile web remove dsh-plugin-notify
+dsh plugin --profile web remove dsh-plugin-notify
+dsh plugin --profile desktop remove dsh-plugin-notify
 ```
 
-Also remove the matching `insert` row from `cordis.patch.yml`, then restart `dsh web`.
-Configuration lives in the Harness settings document `$DSH_HOME/settings.yaml` under the
-`dsh-plugin-notify:` namespace (fallback storage under `$DSH_HOME/storages/dsh-plugin-notify/`);
-delete that section and directory to remove it completely.
+For manual loader installs, also remove the matching `insert` row from `cordis.patch.yml`,
+then restart the host. Config data lives in
+`$DSH_HOME/storages/dsh-plugin-notify/config.json`; delete that directory to remove it fully.
 
 ## Config storage
 
-Since v1.3.0 the config is stored through the official Harness settings service when one is
-mounted: it persists into `$DSH_HOME/settings.yaml` under `dsh-plugin-notify:` (registered via
-`installSettingsSection` on the host, reactively mirrored on the browser via `settingsScope`).
-Without a settings provider the plugin falls back to the classic store
-`$DSH_HOME/storages/dsh-plugin-notify/config.json` (overridable via `config.directory`). The
-first start after upgrading seeds the base layer from an existing config.json, so no manual
-migration is needed.
+- Single durable store: `$DSH_HOME/storages/dsh-plugin-notify/config.json` (overridable via the
+  plugin row's `config.directory`).
+- Atomic writes with mode `0600`; writes are serialized in-process and carry a `revision` for
+  optimistic concurrency. Concurrent editors get a 409 and are asked to reload.
+- The plugin row config is the composition base; DSH 0.2.x's one-time `settings.yaml` import can
+  also land there by entry id. `config.json` wins when present.
+- Web and Desktop share `$DSH_HOME`, and therefore the same notification config.
 
-Feishu/DingTalk signature secrets are schema-declared write-only `role('secret')` fields: the
-settings document and every wire surface only expose a "configured" marker, never the plaintext.
-The API reads them back as empty strings and marks configured ones with `secretSet`; an empty
-string on write means "keep unchanged", and `clearSecrets` lists paths to clear. Webhook URLs and
-generic request headers are stored in plain text, so do not put sensitive credentials there
-(other than the Feishu/DingTalk signature secrets).
+Feishu/DingTalk signature secrets are write-only: GET returns an empty string plus a
+`secretSet` marker; an empty POST value keeps the stored secret, and `clearSecrets` lists paths
+to clear. Webhook URLs and generic headers are stored in plain text — do not put other sensitive
+credentials there.
 
 ## Development
 
@@ -138,55 +153,55 @@ node --check lib/index.js lib/client.js
 node --test
 ```
 
-The client is a hand-written factory-CJS bundle
-(`window.__ModuleLoader__.load({ id: "dsh-plugin-notify", factory })`) with no build step;
-its UI is registered through the `settings.section` and `shell.overlay` slots. The host half
-imports `@deepseek-ai/dsh-settings` / `@deepseek-ai/schemastery` lazily and optionally (it falls
-back to config.json whenever the packages are unresolvable or no settings provider is mounted),
-registers three routes on the `webServer` service, and subscribes to the `session/event` stream.
+- The client is a hand-written factory-CJS bundle
+  (`window.__ModuleLoader__.load({ id: "dsh-plugin-notify", factory })`) with no build step; its
+  UI registers through `settings.section` and `shell.overlay`.
+- The host half has no `@deepseek-ai/*` runtime dependency. It registers authenticated routes
+  through `ctx.connection.fetch`, subscribes to `session/event`, and reads titles through
+  `ctx.sessionTitle` (optional).
 
-Endpoints:
+Endpoints (all authenticated; the browser uses the `/api` prefix):
 
-- `GET  /dsh-plugin-notify/config` — sanitized current config + `secretSet`
-- `POST /dsh-plugin-notify/config` — `{ config, clearSecrets? }` replaces the user-editable config
-- `POST /dsh-plugin-notify/test` — `{ channel: "system" | "feishu" | "dingtalk" | "wecom" | "generic", genericId? }` sends a test message
+- `GET  /api/dsh-plugin-notify/config` — redacted config + `secretSet` + `revision` + `meta`
+- `POST /api/dsh-plugin-notify/config` — `{ config, clearSecrets?, expectedRevision? }`
+- `POST /api/dsh-plugin-notify/test` — `{ channel, genericId?, config?, sound? }`
+- `GET  /api/dsh-plugin-notify/last?sessionId=&kinds=` — latest matched notification (used by the browser for the exact turn-end kind)
+- `POST /api/dsh-plugin-notify/system-settings` — open the system notification settings (Desktop)
 
 ## Changelog
 
-- **v1.3.0** — Adapt to DeepSeek Harness 0.1.1 (migration A): the config now persists through
-  the official settings document `$DSH_HOME/settings.yaml` (`installSettingsSection` +
-  reactive `settingsScope` reads); an existing config.json is migrated automatically as the
-  base layer, and the classic store remains the fallback without a settings provider. Feishu/
-  DingTalk signature secrets are schema-declared write-only `role('secret')` fields — no
-  plaintext on the settings document or any wire surface. External config changes (another tab,
-  a hand-edited settings.yaml) now take effect live in the browser.
-- **v1.2.0** — Host channels now support `ask_user_question` notifications: when the model
-  calls `ask_user_question`, the system channel and Feishu/DingTalk/WeCom/generic webhooks
-  send a "waiting for answer" reminder. Also fixed browser native notifications only
-  showing the first pending notification because of a fixed notification tag.
-- **v1.1.3** — Normalize the README structure: the default `README.md` is now Chinese and
-  the English doc moved to `README-en.md` (`README-ZH.md` removed); every install command is
-  pinned to `#v1.1.3`.
-- **v1.1.2** — Split the README into default English `README.md` + Chinese `README-ZH.md`
-  (reciprocal language links at the top), add the `npx @deepseek-ai/dsh plugin ...` install
-  path and an Update section, and pin every install command to `#v1.1.2`.
-- **v1.1.1** — Fix dark-mode styling for the **Settings → Message reminders** page: save
-  button, switches, card/input borders and status colors now use `--dsw-alias-*` design
-  tokens and follow the light/dark theme.
-- **v1.1.0** — Add browser OS notifications, Windows system notifications and alert sounds;
-  browser and OS notifications are now independent settings.
-- **v1.0.0** — First GitHub release: browser banner, system notification,
-  Feishu/DingTalk/WeCom/generic webhook channels, and the settings page.
+- **v1.4.0** — Adapt to DeepSeek Harness 0.2.1+ (Web + Desktop): the client now uses
+  `sessions.list` + `uiSession.sessionStatus`, restoring browser notifications with multiple
+  sessions and click-to-open; host routes moved to `ctx.connection.fetch` and require
+  authentication; config moved to `config.json` with revision-based conflict protection; added
+  `max-tokens` / `interrupted` turn-end reasons; Desktop uses Electron native notifications and
+  the toast respects window chrome; added `dsh.bundle` for installation from the Plugins page.
+- **v1.3.0** — Adapt to DeepSeek Harness 0.1.1 (migration A): settings-document persistence
+  (`installSettingsSection` + `settingsScope`), config.json base migration, and write-only
+  secret fields. Removed in 0.2.1 upstream; deleted in this release.
+- **v1.2.0** — Host-channel `ask_user_question` notifications; fixed the fixed notification tag
+  that hid successive approval/question alerts.
+- **v1.1.3** — Default README in Chinese, English moved to `README-en.md`.
+- **v1.1.2** — Split README into English + Chinese, add the `npx` install path and Update section.
+- **v1.1.1** — Dark-mode styling for the settings page using `--dsw-alias-*` tokens.
+- **v1.1.0** — Browser OS notifications, Windows system notifications, alert sounds.
+- **v1.0.0** — First GitHub release: browser banner, system notification, Feishu/DingTalk/WeCom/
+  generic webhooks, and the settings page.
 
 ## Known limitations
 
-- The browser channel is an in-page text banner by default. When **OS notification** is
-  enabled, the browser Notification API can notify while the tab is in the background or the
-  window is minimized (permission required, and the browser must stay running). Use the host
-  system notification channel when the browser is fully closed.
-- Feishu/DingTalk signature secrets are write-only + read-sanitized and stored unencrypted in
-  the local `settings.yaml` (or the fallback `config.json`); do not put other sensitive
-  credentials in generic-webhook URLs or request headers.
+- The OS notification switch cannot be read through the Web API. The desktop page no longer shows a potentially misleading "granted" status; it shows a hint and an "Open system notification settings" button instead.
+- Clicking a desktop notification tries `window.focus()` and opens the session. Electron does
+  not expose a plugin API to restore a window hidden to the tray, so it may not come back
+  automatically.
+- Windows Electron notifications depend on the app's AUMID; if they do not appear, use the host
+  system notification channel.
+- Browser native notifications need permission and the page/host running; use the host system
+  channel or webhooks when the app is fully closed.
+- Enabling both Desktop and host system notifications may duplicate reminders; the settings
+  page warns about it.
+- Feishu/DingTalk secrets are write-only + read-sanitized but are stored unencrypted in the
+  local `config.json`.
 
 ## License
 
