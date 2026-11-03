@@ -98,6 +98,22 @@ test("renderTemplate replaces placeholders and keeps unknown ones", () => {
   assert.equal(renderTemplate("   ", message), "B");
 });
 
+test("renderTemplate escapes json: placeholders for a JSON template", () => {
+  const message = {
+    title: 'He said "hi"', body: 'line one\nline two \\ "quoted"',
+    kind: "turnEnd", sessionId: "s1", turn: 3,
+    toolName: "", reason: "", time: "2025-01-01 00:00:00",
+  };
+  const template = '{"title":"{{json:title}}","body":"{{json:body}}"}';
+  const rendered = renderTemplate(template, message);
+  // The rendered payload must stay parseable and round-trip the exact values.
+  assert.deepEqual(JSON.parse(rendered), { title: message.title, body: message.body });
+  // Unknown json: keys stay literal.
+  assert.equal(renderTemplate('{"x":"{{json:unknown}}"}', message), '{"x":"{{json:unknown}}"}');
+  // Raw placeholders stay unescaped — that is why json: exists.
+  assert.equal(renderTemplate('{"t":"{{title}}"}', message), '{"t":"He said "hi""}');
+});
+
 test("renderChannelText uses the unified default template and prefers bodyTemplate", () => {
   const message = { title: "T", body: "B", sessionId: "s1", turn: 7, time: "2025-01-01 00:00:00", kind: "turnEnd" };
   assert.equal(renderChannelText({}, message), DEFAULT_MESSAGE_TEMPLATE.replace("{{title}}", "T").replace("{{body}}", "B").replace("{{sessionId}}", "s1").replace("{{time}}", "2025-01-01 00:00:00"));

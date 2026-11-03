@@ -35,6 +35,10 @@ All webhook channels share the placeholders
 - Feishu/DingTalk/WeCom use a unified default format (title + details + session + local time);
   fill **Message template** to override it.
 - A generic webhook with an empty template sends the plain-text message body.
+- Placeholders are inserted **verbatim** by default. For a JSON request body (Bark `/push`,
+  ntfy JSON, …) use `{{json:title}}` / `{{json:body}}` instead: the value is escaped for a JSON
+  string literal, so quotes and newlines no longer break the payload — for example
+  `{"title":"{{json:title}}","body":"{{json:body}}"}`.
 
 ## Triggers
 
