@@ -269,3 +269,31 @@ test("client bundle exports the expected shape and applies twice without throwin
   assert.doesNotThrow(() => exports.apply(harness.ctx));
   await tick();
 });
+
+test("resolveSessionOpener prefers uiWorkspace.openSession and falls back to sessions.open", () => {
+  const harness = createHarness();
+  const exports = harness.registration.factory((id) => {
+    if (id === "react") return { createElement: () => null, useState: (v) => [v, () => {}], useEffect() {}, useRef: (v) => ({ current: v }), useSyncExternalStore: (s, g) => g(), Component: ReactComponentStub };
+    if (id === "react-dom") return { createPortal: (node) => node };
+    return { IconPlusOutline16: () => null };
+  });
+
+  const calls = [];
+  const modern = {
+    get(name) {
+      if (name === "uiWorkspace") return { openSession: (id) => calls.push(["workspace", id]) };
+      if (name === "sessions") return { open: (id) => calls.push(["sessions", id]) };
+      return undefined;
+    },
+  };
+  exports.resolveSessionOpener(modern)("s1");
+  assert.deepEqual(calls, [["workspace", "s1"]], "uiWorkspace wins when both exist");
+
+  calls.length = 0;
+  const legacy = { get: (name) => (name === "sessions" ? { open: (id) => calls.push(["sessions", id]) } : undefined) };
+  exports.resolveSessionOpener(legacy)("s2");
+  assert.deepEqual(calls, [["sessions", "s2"]], "older releases fall back to sessions.open");
+
+  assert.equal(exports.resolveSessionOpener({ get: () => undefined }), undefined, "no navigation service");
+  assert.equal(exports.resolveSessionOpener({ get: () => { throw new Error("service gone"); } }), undefined, "throwing lookup is tolerated");
+});
